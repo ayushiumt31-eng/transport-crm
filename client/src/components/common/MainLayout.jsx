@@ -2,26 +2,12 @@ import React, { useState } from 'react';
 import { Outlet } from 'react-router-dom';
 import Sidebar from './Sidebar';
 import Navbar from './Navbar';
-import { panelOptions } from '../../config/navigation';
-
-const PANEL_KEY = 'transport_crm_panel';
-
-function getInitialPanel() {
-  const savedPanel = sessionStorage.getItem(PANEL_KEY);
-  return panelOptions.some((panel) => panel.value === savedPanel)
-    ? savedPanel
-    : 'super_admin';
-}
+import { useAuth } from '../../auth/AuthContext';
 
 export default function MainLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [userRole, setUserRole] = useState(getInitialPanel);
-
-  const changePanel = (nextRole) => {
-    sessionStorage.setItem(PANEL_KEY, nextRole);
-    setUserRole(nextRole);
-    setSidebarOpen(false);
-  };
+  // The panel is decided by who signed in; it can no longer be switched from the UI.
+  const { role: userRole, user, logout } = useAuth();
 
   return (
     <div className="min-h-screen bg-slate-50 font-sans">
@@ -35,11 +21,12 @@ export default function MainLayout() {
       )}
       <Sidebar
         userRole={userRole}
-        onRoleChange={changePanel}
+        user={user}
+        onLogout={logout}
         isOpen={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
       />
-      <Navbar onMenuClick={() => setSidebarOpen(true)} userRole={userRole} />
+      <Navbar onMenuClick={() => setSidebarOpen(true)} userRole={userRole} user={user} onLogout={logout} />
       <main className="px-4 pb-6 pt-20 sm:px-6 lg:pl-72">
         <Outlet context={{ userRole }} />
       </main>

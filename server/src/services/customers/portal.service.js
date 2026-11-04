@@ -1,188 +1,216 @@
+const mongoose = require('mongoose');
 const { Customer } = require('../../models/customers/auth.model');
-const { CustomerPortal } = require('../../models/customers/portal.model');
-const { CustomerActivity } = require('../../models/customers/activity.model');
-const kycDocumentService = require('./kyc-document.service');
+const KycDocument = require('../../models/customers/kyc-document.model');
+const { isProfileComplete, invalidateKycIfIdentityChanged } = require('./customer-profile.util');
 
-const MAX_ADDRESSES = 10;
-
-const getOrCreatePortal = async (customerId) => {
-    return CustomerPortal.findOneAndUpdate(
-        { customerId },
-        { $setOnInsert: { customerId } },
-        { new: true, upsert: true }
-    );
+const serviceError = (message, statusCode) => Object.assign(new Error(message), { statusCode });
+const DOCUMENT_MAX_BYTES = 5 * 1024 * 1024;
+const MIME_SIGNATURES = {
+    'application/pdf': (data) => data.subarray(0, 5).toString('ascii') === '%PDF-',
+    'image/jpeg': (data) => data.length >= 3 && data[0] === 0xff && data[1] === 0xd8 && data[2] === 0xff,
+    'image/png': (data) => data.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
 };
 
-const getCustomer = async (customerId) => {
-    const customer = await Customer.findById(customerId);
-    if (!customer) throw new Error('Customer not found.');
+async function findCustomer(id) {
+    if (!mongoose.isValidObjectId(id)) throw serviceError('Invalid customer ID.', 400);
+    const customer = await Customer.findById(id);
+    if (!customer) throw serviceError('Customer not found.', 404);
+    if (customer.status === 'Suspended') throw serviceError('Your account has been suspended. Please contact support.', 403);
     return customer;
-};
+}
 
-const isProfileFilled = (c) =>
-    !!(c.companyName && c.contactPerson && c.email && c.pan &&
-       c.address && c.address.street && c.address.city && c.address.state && c.address.pincode);
+function publicDocument(document) {
+    const value = document.toObject ? document.toObject() : document;
+    delete value.content;
+    return value;
+}
 
-// ---------- Dashboard ----------
-exports.getDashboardService = async (customerId) => {
-    const [customer, portal] = await Promise.all([
-        getCustomer(customerId),
-        getOrCreatePortal(customerId)
-    ]);
-
-    const checks = [
-        !!customer.companyName, !!customer.contactPerson, !!customer.email, !!customer.pan,
-        !!(customer.address && customer.address.street && customer.address.city &&
-           customer.address.state && customer.address.pincode)
-    ];
-    const completionPercent = Math.round((checks.filter(Boolean).length / checks.length) * 100);
-
+exports.getDashboard = async (customerId) => {
+    const customer = await findCustomer(customerId);
+    const completedFields = [
+        customer.companyName,
+        customer.contactPerson,
+        customer.email,
+        customer.pan,
+        customer.address?.street,
+        customer.address?.city,
+        customer.address?.state,
+        customer.address?.pincode
+    ].filter((value) => String(value || '').trim()).length;
     return {
-        customer: {
-            _id: customer._id,
-            phone: customer.phone,
-            companyName: customer.companyName,
-            contactPerson: customer.contactPerson,
-            status: customer.status
-        },
-        profile: { isProfileComplete: customer.isProfileComplete, completionPercent },
-        savedAddresses: portal.addresses.length,
-        preferences: portal.preferences,
-        bookings: null // Booking module ke baad counts aayenge
+        profile: { completionPercent: Math.round((completedFields / 8) * 100) },
+        savedAddresses: customer.addresses.length
     };
 };
 
-// ---------- Profile ----------
-exports.getProfileService = async (customerId) => getCustomer(customerId);
-
-exports.updateProfileService = async (customerId, data) => {
-    const customer = await getCustomer(customerId);
-    const { address, gstin, ...rest } = data;
-    const previousKycIdentity = JSON.stringify({ pan: customer.pan, gstin: customer.gstin, address: customer.address.toObject() });
-    const changedFields = [];
-    let kycIdentityChanged = false;
-
-    Object.keys(rest).forEach((key) => {
-        if (String(customer[key] || '') !== String(rest[key] || '')) {
-            changedFields.push(key);
-            if (key === 'pan') kycIdentityChanged = true;
-        }
-        customer[key] = rest[key];
-    });
-    if (gstin !== undefined) {
-        if (String(customer.gstin || '') !== String(gstin || '')) {
-            changedFields.push('gstin');
-            kycIdentityChanged = true;
-        }
-        customer.gstin = gstin || undefined;
-    }
-    if (address) {
-        Object.keys(address).forEach((key) => {
-            if (String(customer.address[key] || '') !== String(address[key] || '')) {
-                changedFields.push(`address.${key}`);
-                kycIdentityChanged = true;
-            }
-            customer.address[key] = address[key];
-        });
-    }
-
-    customer.isProfileComplete = isProfileFilled(customer);
-    const currentKycIdentity = JSON.stringify({ pan: customer.pan, gstin: customer.gstin, address: customer.address.toObject() });
-    if (kycIdentityChanged && previousKycIdentity !== currentKycIdentity) customer.markKycNotSubmitted();
+exports.getProfile = async (customerId) => {
+    const customer = await findCustomer(customerId);
+    customer.lastActiveAt = new Date();
     await customer.save();
-    if (changedFields.length) {
-        await CustomerActivity.create({
-            customerId,
-            type: 'profile_updated',
-            subject: 'Customer profile updated',
-            description: `Updated fields: ${changedFields.join(', ')}`,
-            actorId: String(customerId),
-            actorRole: 'customer'
-        });
-    }
-    return customer;
+    return customer.toObject({ transform: (_doc, value) => {
+        delete value.notes;
+        delete value.statusReason;
+        delete value.crmStatus;
+        delete value.crmVerificationStatus;
+        delete value.creditLimit;
+        delete value.paymentTerms;
+        return value;
+    } });
 };
 
-exports.submitKycService = async (customerId) => {
-    const customer = await getCustomer(customerId);
-    if (!customer.isProfileComplete || !customer.pan || !customer.address?.street || !customer.address?.city || !customer.address?.state || !customer.address?.pincode) {
-        throw Object.assign(new Error('Complete your profile before submitting KYC.'), { statusCode: 409 });
+exports.updateProfile = async (customerId, changes) => {
+    const customer = await findCustomer(customerId);
+    if (changes.email) {
+        const duplicate = await Customer.exists({ email: changes.email, _id: { $ne: customer._id } });
+        if (duplicate) throw serviceError('Email address is already in use.', 409);
     }
-    await kycDocumentService.validateRequiredKycDocuments(customer);
-    if (customer.kycStatus === 'Pending') {
-        return customer;
+    if (changes.gstin) {
+        const duplicate = await Customer.exists({ gstin: changes.gstin, _id: { $ne: customer._id } });
+        if (duplicate) throw serviceError('GSTIN is already registered.', 409);
+    }
+    if (changes.pan) {
+        const duplicate = await Customer.exists({ pan: changes.pan, _id: { $ne: customer._id } });
+        if (duplicate) throw serviceError('PAN is already registered.', 409);
     }
 
-    customer.markKycPending();
-    await customer.save();
-    await CustomerActivity.create({
-        customerId,
-        type: 'kyc_submitted',
-        subject: 'KYC submitted for review',
-        actorId: String(customerId),
-        actorRole: 'customer'
+    const identityChanged = invalidateKycIfIdentityChanged(customer, changes);
+    if (identityChanged) {
+        await KycDocument.updateMany(
+            { customerId: customer._id, status: 'Verified' },
+            { $set: { status: 'Pending', remarks: '', reviewedAt: null, reviewedBy: '' } }
+        );
+    }
+    customer.set({
+        ...changes,
+        ...(changes.address ? { address: { ...customer.address.toObject(), ...changes.address } } : {})
     });
-    return customer;
+    if (changes.email === '') customer.set('email', undefined);
+    if (changes.gstin === '') customer.set('gstin', undefined);
+    if (changes.pan === '') customer.set('pan', undefined);
+
+    customer.isProfileComplete = isProfileComplete(customer);
+    await customer.save();
+    return customer.toObject();
 };
 
-// ---------- Preferences ----------
-exports.getPreferencesService = async (customerId) => {
-    const portal = await getOrCreatePortal(customerId);
-    return portal.preferences;
+exports.getPreferences = async (customerId) => {
+    const customer = await findCustomer(customerId);
+    return customer.preferences.toObject();
 };
 
-exports.updatePreferencesService = async (customerId, data) => {
-    const portal = await getOrCreatePortal(customerId);
-    Object.keys(data).forEach((key) => { portal.preferences[key] = data[key]; });
-    await portal.save();
-    return portal.preferences;
+exports.updatePreferences = async (customerId, changes) => {
+    const customer = await findCustomer(customerId);
+    for (const [key, value] of Object.entries(changes)) {
+        customer.set(`preferences.${key}`, value);
+    }
+    await customer.save();
+    return customer.preferences.toObject();
 };
 
-// ---------- Addresses ----------
-exports.listAddressesService = async (customerId) => {
-    const portal = await getOrCreatePortal(customerId);
-    return portal.addresses;
+exports.listAddresses = async (customerId) => {
+    const customer = await findCustomer(customerId);
+    return customer.addresses;
 };
 
-exports.addAddressService = async (customerId, data) => {
-    const portal = await getOrCreatePortal(customerId);
-    if (portal.addresses.length >= MAX_ADDRESSES) {
-        throw new Error(`Maximum ${MAX_ADDRESSES} saved addresses allowed.`);
+exports.saveAddress = async (customerId, addressId, data) => {
+    const customer = await findCustomer(customerId);
+    if (addressId && !mongoose.isValidObjectId(addressId)) {
+        throw serviceError('Invalid address ID.', 400);
     }
 
-    if (data.isDefault || portal.addresses.length === 0) {
-        portal.addresses.forEach((a) => { a.isDefault = false; });
-        data.isDefault = true;
+    let address;
+    if (addressId) {
+        address = customer.addresses.id(addressId);
+        if (!address) throw serviceError('Saved address not found.', 404);
+        address.set(data);
+    } else {
+        if (customer.addresses.length >= 25) throw serviceError('You can save at most 25 addresses.', 409);
+        customer.addresses.push(data);
+        address = customer.addresses[customer.addresses.length - 1];
     }
 
-    portal.addresses.push(data);
-    await portal.save();
-    return portal.addresses[portal.addresses.length - 1];
-};
-
-exports.updateAddressService = async (customerId, addressId, data) => {
-    const portal = await getOrCreatePortal(customerId);
-    const address = portal.addresses.id(addressId);
-    if (!address) throw new Error('Address not found.');
-
-    if (data.isDefault) {
-        portal.addresses.forEach((a) => { a.isDefault = false; });
+    if (address.isDefault) {
+        customer.addresses.forEach((item) => { item.isDefault = String(item._id) === String(address._id); });
+    } else if (customer.addresses.length === 1) {
+        address.isDefault = true;
     }
-    address.set(data);
-    await portal.save();
-    return address;
+    await customer.save();
+    return address.toObject();
 };
 
-exports.deleteAddressService = async (customerId, addressId) => {
-    const portal = await getOrCreatePortal(customerId);
-    const address = portal.addresses.id(addressId);
-    if (!address) throw new Error('Address not found.');
-
+exports.deleteAddress = async (customerId, addressId) => {
+    const customer = await findCustomer(customerId);
+    if (!mongoose.isValidObjectId(addressId)) throw serviceError('Invalid address ID.', 400);
+    const address = customer.addresses.id(addressId);
+    if (!address) throw serviceError('Saved address not found.', 404);
     const wasDefault = address.isDefault;
-    portal.addresses.pull(addressId);
-    if (wasDefault && portal.addresses.length > 0) {
-        portal.addresses[0].isDefault = true;
+    address.deleteOne();
+    if (wasDefault && customer.addresses.length) customer.addresses[0].isDefault = true;
+    await customer.save();
+};
+
+exports.submitKyc = async (customerId) => {
+    const customer = await findCustomer(customerId);
+    customer.isProfileComplete = isProfileComplete(customer);
+    if (!customer.isProfileComplete) {
+        await customer.save();
+        throw serviceError('Complete your profile, including PAN and address, before submitting KYC.', 409);
     }
-    await portal.save();
-    return { message: 'Address deleted.' };
+    if (customer.kycStatus === 'Pending') throw serviceError('Your KYC is already awaiting review.', 409);
+    if (customer.kycStatus === 'Verified') throw serviceError('Your KYC is already verified.', 409);
+    customer.kycStatus = 'Pending';
+    customer.crmVerificationStatus = 'Pending';
+    customer.kycSubmittedAt = new Date();
+    customer.kycReviewedAt = null;
+    customer.kycReviewedBy = '';
+    customer.kycRemarks = '';
+    await customer.save();
+    return customer.toObject();
+};
+
+exports.uploadKycDocument = async (customerId, documentType, file) => {
+    const customer = await findCustomer(customerId);
+    if (!file) throw serviceError('Choose a document file to upload.', 400);
+    if (file.size < 1 || file.size > DOCUMENT_MAX_BYTES) {
+        throw serviceError('KYC documents must be between 1 byte and 5 MB.', 413);
+    }
+    const signatureIsValid = MIME_SIGNATURES[file.mimetype]?.(file.buffer);
+    if (!signatureIsValid) throw serviceError('Only valid PDF, JPEG or PNG documents are accepted.', 415);
+
+    const originalName = file.originalname
+        .replace(/[\\/\u0000-\u001f\u007f"]/g, '_')
+        .slice(0, 255);
+    const document = await KycDocument.create({
+        customerId: customer._id,
+        documentType,
+        originalName,
+        contentType: file.mimetype,
+        size: file.size,
+        content: file.buffer
+    });
+
+    if (customer.kycStatus === 'Verified') {
+        customer.kycStatus = 'NotSubmitted';
+        customer.kycSubmittedAt = null;
+        customer.kycReviewedAt = null;
+        customer.kycReviewedBy = '';
+        customer.kycRemarks = '';
+        customer.crmVerificationStatus = 'Pending';
+        await customer.save();
+    }
+    return publicDocument(document);
+};
+
+exports.listKycDocuments = async (customerId) => {
+    const customer = await findCustomer(customerId);
+    const documents = await KycDocument.find({ customerId: customer._id }).sort({ createdAt: -1, _id: -1 }).lean();
+    return documents.map(publicDocument);
+};
+
+exports.getKycDocumentContent = async (customerId, documentId) => {
+    const customer = await findCustomer(customerId);
+    if (!mongoose.isValidObjectId(documentId)) throw serviceError('Invalid KYC document ID.', 400);
+    const document = await KycDocument.findOne({ _id: documentId, customerId: customer._id }).select('+content').lean();
+    if (!document) throw serviceError('KYC document not found.', 404);
+    return document;
 };

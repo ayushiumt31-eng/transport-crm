@@ -1,16 +1,18 @@
 import React, { useEffect, useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
-import { ChevronDown, ChevronRight } from 'lucide-react';
-import { panelOptions, roleMenus } from '../../config/navigation';
+import { ChevronDown, ChevronRight, LogOut, UserRound } from 'lucide-react';
+import { panelByRole, roleMenus } from '../../config/navigation';
 
 export default function Sidebar({
-  userRole = 'super_admin',
+  userRole,
+  user,
   isOpen = false,
   onClose = () => {},
-  onRoleChange = () => {}
+  onLogout = () => {}
 }) {
   const location = useLocation();
-  const currentMenuItems = roleMenus[userRole] || roleMenus.super_admin;
+  const currentMenuItems = roleMenus[userRole] || [];
+  const panel = panelByRole[userRole];
   const activeDropdown = currentMenuItems.findIndex((item) =>
     item.submenus?.some((submenu) => submenu.path === location.pathname)
   );
@@ -42,25 +44,9 @@ export default function Sidebar({
         </div>
       </div>
 
-      <div className="border-b border-[#24443d] p-4">
-        <label
-          htmlFor="user-panel"
-          className="mb-2 block text-[10px] font-bold uppercase tracking-[0.16em] text-emerald-100/60"
-        >
-          Switch panel
-        </label>
-        <select
-          id="user-panel"
-          value={userRole}
-          onChange={(event) => onRoleChange(event.target.value)}
-          className="w-full cursor-pointer rounded-xl border border-[#365850] bg-[#173a33] px-3 py-2.5 text-xs font-semibold text-slate-100 outline-none transition focus:border-emerald-400 focus:ring-2 focus:ring-emerald-400/20"
-        >
-          {panelOptions.map((panel) => (
-            <option key={panel.value} value={panel.value} className="bg-slate-900">
-              {panel.label}
-            </option>
-          ))}
-        </select>
+      <div className="border-b border-[#24443d] px-4 py-3">
+        <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-emerald-100/60">Signed in to</p>
+        <p className="mt-1 text-xs font-semibold text-slate-100">{panel?.label}</p>
       </div>
 
       <div className="flex-1 space-y-1 overflow-y-auto p-3">
@@ -138,10 +124,21 @@ export default function Sidebar({
         })}
       </div>
 
-      <div className="border-t border-[#24443d] px-4 py-3">
-        <p className="truncate text-[10px] font-semibold uppercase tracking-[0.12em] text-emerald-100/60">
-          {panelOptions.find((panel) => panel.value === userRole)?.label || panelOptions[0].label}
-        </p>
+      <div className="flex items-center gap-3 border-t border-[#24443d] px-4 py-3">
+        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-[#1c443d] text-emerald-200"><UserRound size={16} /></span>
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-xs font-semibold text-white">{user?.name || panel?.title}</p>
+          <p className="truncate text-[10px] text-emerald-100/60">{user?.loginId ? `ID: ${user.loginId}` : panel?.title}</p>
+        </div>
+        <button
+          type="button"
+          onClick={onLogout}
+          aria-label="Logout"
+          title="Logout"
+          className="rounded-lg p-2 text-slate-300 transition hover:bg-white/10 hover:text-white"
+        >
+          <LogOut size={16} />
+        </button>
       </div>
     </aside>
   );

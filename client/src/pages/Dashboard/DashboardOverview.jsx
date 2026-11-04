@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Activity, ArrowRight, CheckCircle2, CircleDashed, RefreshCw, WifiOff } from 'lucide-react';
 import { Link, useOutletContext } from 'react-router-dom';
-import { panelOptions, roleMenus } from '../../config/navigation';
+import { useAuth } from '../../auth/AuthContext';
+import { panelByRole, panelOptions, roleMenus } from '../../config/navigation';
 
 function ApiStatus({ status, database, error, onRetry, checking }) {
   const isConnected = status === 'ok' || status === 'connected';
@@ -55,10 +56,11 @@ function ApiStatus({ status, database, error, onRetry, checking }) {
 }
 
 export default function DashboardOverview() {
-  const { userRole = 'super_admin' } = useOutletContext() || {};
+  const { userRole } = useOutletContext() || {};
+  const { user } = useAuth();
   const [health, setHealth] = useState({ status: '', database: '', error: '', checking: true });
-  const panel = panelOptions.find((option) => option.value === userRole) || panelOptions[0];
-  const modules = roleMenus[userRole] || roleMenus.super_admin;
+  const panel = panelByRole[userRole] || panelOptions[0];
+  const modules = roleMenus[userRole] || [];
 
   const loadHealth = useCallback(async () => {
     setHealth((current) => ({ ...current, checking: true, error: '' }));
@@ -94,7 +96,7 @@ export default function DashboardOverview() {
         <div className="flex flex-col gap-6 md:flex-row md:items-end md:justify-between">
           <div>
             <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-emerald-300">
-              Transport operations
+              {user?.name ? `Welcome, ${user.name}` : 'Transport operations'}
             </p>
             <h1 className="mt-2 text-2xl font-bold tracking-tight sm:text-3xl">
               {panel.label.replace(' Panel', '')} workspace

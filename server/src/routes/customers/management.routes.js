@@ -1,25 +1,34 @@
 const express = require('express');
+const controller = require('../../controllers/customers/management.controller');
+const { verifyAccessToken, requireRole, STAFF_ROLES } = require('../../middlewares/auth.middleware');
+const { validate } = require('../../middlewares/validation.middleware');
+const {
+    activityListQuerySchema,
+    activityParamsSchema,
+    activitySchema,
+    customerIdParamsSchema,
+    customerListQuerySchema,
+    customerProfileSchema,
+    customerStatusSchema,
+    documentParamsSchema,
+    documentReviewSchema,
+    kycReviewSchema
+} = require('../../validations/customers/customer.validation');
+
 const router = express.Router();
+router.use(verifyAccessToken, requireRole(...STAFF_ROLES));
 
-const managementController = require('../../controllers/customers/management.controller');
-const { verifyAccessToken, requireRole } = require('../../middlewares/auth.middleware');
-
-router.use(verifyAccessToken, requireRole('admin'));
-
-router.get('/summary', managementController.getCustomerSummary);
-router.get('/registrations', managementController.listCustomers);
-router.post('/registrations', managementController.createCustomerRegistration);
-router.put('/registrations/:id', managementController.updateCustomerRegistration);
-router.get('/', managementController.listCustomers);
-router.get('/:id/kyc/documents', managementController.listCustomerKycDocuments);
-router.patch('/:id/kyc/documents/:documentId/review', managementController.reviewCustomerKycDocument);
-router.get('/:id/kyc/documents/:documentId/download', managementController.downloadCustomerKycDocument);
-router.patch('/:id/kyc', managementController.reviewCustomerKyc);
-router.get('/:id/activities', managementController.listCustomerActivities);
-router.post('/:id/activities', managementController.createCustomerActivity);
-router.patch('/:id/activities/:activityId/complete', managementController.completeCustomerFollowUp);
-router.get('/:id', managementController.getCustomerById);
-router.patch('/:id/status', managementController.updateCustomerStatus);
-router.put('/:id', managementController.updateCustomerProfile);
+router.get('/summary', controller.getSummary);
+router.get('/', validate(customerListQuerySchema, 'query'), controller.listCustomers);
+router.get('/:id/activities', validate(customerIdParamsSchema, 'params'), validate(activityListQuerySchema, 'query'), controller.listActivities);
+router.post('/:id/activities', validate(customerIdParamsSchema, 'params'), validate(activitySchema), controller.createActivity);
+router.patch('/:id/activities/:activityId/complete', validate(activityParamsSchema, 'params'), controller.completeFollowUp);
+router.get('/:id/kyc/documents', validate(customerIdParamsSchema, 'params'), controller.listKycDocuments);
+router.get('/:id/kyc/documents/:documentId/download', validate(documentParamsSchema, 'params'), controller.downloadKycDocument);
+router.patch('/:id/kyc/documents/:documentId/review', validate(documentParamsSchema, 'params'), validate(documentReviewSchema), controller.reviewKycDocument);
+router.patch('/:id/status', validate(customerIdParamsSchema, 'params'), validate(customerStatusSchema), controller.updateCustomerStatus);
+router.patch('/:id/kyc', validate(customerIdParamsSchema, 'params'), validate(kycReviewSchema), controller.reviewCustomerKyc);
+router.get('/:id', validate(customerIdParamsSchema, 'params'), controller.getCustomer);
+router.put('/:id', validate(customerIdParamsSchema, 'params'), validate(customerProfileSchema), controller.updateCustomerProfile);
 
 module.exports = router;

@@ -15,6 +15,7 @@ import {
   AlertCircle,
   UserPlus
 } from "lucide-react";
+import { getAccessToken } from "../../auth/session";
 
 // ==========================================
 // Zod Schema for Customer Registration
@@ -90,10 +91,9 @@ const initialForm = {
   notes: "",
 };
 
-const ADMIN_TOKEN_KEY = "transport_admin_access_token";
 
 async function customerRequest(path, options = {}) {
-  const token = sessionStorage.getItem(ADMIN_TOKEN_KEY);
+  const token = getAccessToken();
   const response = await fetch(`/api/v1${path}`, {
     ...options,
     headers: {

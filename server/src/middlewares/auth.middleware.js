@@ -1,36 +1,73 @@
-const { verifyAccessToken } = require('../utils/jwt.util');
+const mongoose = require('mongoose');
+const { UserAccount } = require('../models/auth/user-account.model');
+const { verifyAccessToken: verifyJwt } = require('../utils/jwt.util');
 
-const authMiddleware = (req, res, next) => {
-  const authorization = req.headers.authorization;
-  const [scheme, token] = authorization ? authorization.split(' ') : [];
+const STAFF_ROLES = ['admin', 'manager'];
 
-  if (scheme !== 'Bearer' || !token) {
-    return res.status(401).json({
-      success: false,
-      message: 'Access token is required.'
+function unauthorized(response) {
+    return response.status(401).json({
+        success: false,
+        message: 'Your session has ended. Please sign in again.'
     });
-  }
+}
 
-  try {
-    req.user = verifyAccessToken(token);
-    return next();
-  } catch (error) {
-    return res.status(401).json({
-      success: false,
-      message: error.message
-    });
-  }
-};
+async function verifyAccessToken(request, response, next) {
+    const authorization = request.get('authorization') || '';
+    const [scheme, token] = authorization.split(' ');
+    if (scheme !== 'Bearer' || !token) return unauthorized(response);
 
-const requireRole = (...allowedRoles) => (req, res, next) => {
-  if (!req.user || !allowedRoles.includes(req.user.role)) {
-    return res.status(403).json({
-      success: false,
-      message: 'You do not have permission to access this resource.'
-    });
-  }
+    let payload;
+    try {
+        payload = verifyJwt(token);
+    } catch (error) {
+        if (error.statusCode === 503) return next(error);
+        return unauthorized(response);
+    }
 
-  return next();
-};
+    if (
+        !mongoose.isValidObjectId(payload.aid) ||
+        typeof payload.role !== 'string' ||
+        !Number.isInteger(payload.v)
+    ) {
+        return unauthorized(response);
+    }
 
-module.exports = { verifyAccessToken: authMiddleware, requireRole };
+    try {
+        const account = await UserAccount.findById(payload.aid)
+            .select('_id role profileId status tokenVersion')
+            .lean();
+
+        if (
+            !account ||
+            account.status !== 'Active' ||
+            account.role !== payload.role ||
+            account.tokenVersion !== payload.v
+        ) {
+            return unauthorized(response);
+        }
+
+        request.user = {
+            id: String(account.profileId || account._id),
+            accountId: String(account._id),
+            role: account.role
+        };
+        return next();
+    } catch (error) {
+        return next(error);
+    }
+}
+
+function requireRole(...roles) {
+    return (request, response, next) => {
+        if (!request.user) return unauthorized(response);
+        if (!roles.includes(request.user.role)) {
+            return response.status(403).json({
+                success: false,
+                message: 'You do not have permission to access this resource.'
+            });
+        }
+        return next();
+    };
+}
+
+module.exports = { verifyAccessToken, requireRole, STAFF_ROLES };

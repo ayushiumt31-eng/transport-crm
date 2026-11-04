@@ -1,169 +1,66 @@
 const portalService = require('../../services/customers/portal.service');
-const kycDocumentService = require('../../services/customers/kyc-document.service');
 
-const streamKycDocument = ({ document, stream }, response, next) => {
+const handle = (work, { status = 200, message } = {}) => async (request, response, next) => {
+    try {
+        const data = await work(request);
+        return response.status(status).json({ success: true, ...(message ? { message } : {}), data });
+    } catch (error) {
+        return next(error);
+    }
+};
+
+function sendDocument(document, response) {
+    const filename = document.originalName.replace(/["\\\r\n]/g, '_');
+    const content = Buffer.isBuffer(document.content)
+        ? document.content
+        : Buffer.from(document.content.buffer).subarray(0, document.size);
     response.set({
         'Content-Type': document.contentType,
         'Content-Length': document.size,
-        'Content-Disposition': `attachment; filename="${document.originalName.replace(/["\\\r\n]/g, '_')}"`,
+        'Content-Disposition': `attachment; filename="${filename}"`,
         'Cache-Control': 'private, no-store',
         'X-Content-Type-Options': 'nosniff'
     });
-    stream.on('error', next).pipe(response);
-};
+    return response.end(content);
+}
 
-// ---------- Dashboard ----------
-exports.getDashboard = async (req, res, next) => {
+exports.getDashboard = handle((request) => portalService.getDashboard(request.user.id));
+exports.getProfile = handle((request) => portalService.getProfile(request.user.id));
+exports.updateProfile = handle((request) => portalService.updateProfile(request.user.id, request.body), {
+    message: 'Profile updated successfully.'
+});
+exports.getPreferences = handle((request) => portalService.getPreferences(request.user.id));
+exports.updatePreferences = handle((request) => portalService.updatePreferences(request.user.id, request.body), {
+    message: 'Preferences updated successfully.'
+});
+exports.listAddresses = handle((request) => portalService.listAddresses(request.user.id));
+exports.saveAddress = handle((request) => portalService.saveAddress(
+    request.user.id,
+    request.params.id,
+    request.body
+), { status: 201, message: 'Address saved successfully.' });
+exports.updateAddress = handle((request) => portalService.saveAddress(
+    request.user.id,
+    request.params.id,
+    request.body
+), { message: 'Address updated successfully.' });
+exports.deleteAddress = handle(async (request) => {
+    await portalService.deleteAddress(request.user.id, request.params.id);
+    return { message: 'Address deleted successfully.' };
+});
+exports.submitKyc = handle((request) => portalService.submitKyc(request.user.id), {
+    message: 'KYC submitted for review.'
+});
+exports.uploadKycDocument = handle((request) => portalService.uploadKycDocument(
+    request.user.id,
+    request.body.documentType,
+    request.file
+), { status: 201, message: 'KYC document uploaded.' });
+exports.listKycDocuments = handle((request) => portalService.listKycDocuments(request.user.id));
+exports.downloadKycDocument = async (request, response, next) => {
     try {
-        const data = await portalService.getDashboardService(req.user.id);
-        res.status(200).json({ success: true, data });
-    } catch (error) {
-        next(error);
-    }
-};
-
-// ---------- Profile ----------
-exports.getProfile = async (req, res, next) => {
-    try {
-        const data = await portalService.getProfileService(req.user.id);
-        res.status(200).json({ success: true, data });
-    } catch (error) {
-        next(error);
-    }
-};
-
-exports.updateProfile = async (req, res, next) => {
-    try {
-        const data = await portalService.updateProfileService(
-            req.user.id,
-            req.body
-        );
-        res.status(200).json({
-            success: true,
-            message: 'Profile updated successfully.',
-            data
-        });
-    } catch (error) {
-        next(error);
-    }
-};
-
-// ---------- Preferences ----------
-exports.getPreferences = async (req, res, next) => {
-    try {
-        const data = await portalService.getPreferencesService(req.user.id);
-        res.status(200).json({ success: true, data });
-    } catch (error) {
-        next(error);
-    }
-};
-
-exports.updatePreferences = async (req, res, next) => {
-    try {
-        const data = await portalService.updatePreferencesService(
-            req.user.id,
-            req.body
-        );
-        res.status(200).json({
-            success: true,
-            message: 'Preferences updated successfully.',
-            data
-        });
-    } catch (error) {
-        next(error);
-    }
-};
-
-// ---------- Addresses ----------
-exports.listAddresses = async (req, res, next) => {
-    try {
-        const data = await portalService.listAddressesService(req.user.id);
-        res.status(200).json({ success: true, data });
-    } catch (error) {
-        next(error);
-    }
-};
-
-exports.addAddress = async (req, res, next) => {
-    try {
-        const data = await portalService.addAddressService(
-            req.user.id,
-            req.body
-        );
-        res.status(201).json({
-            success: true,
-            message: 'Address added successfully.',
-            data
-        });
-    } catch (error) {
-        next(error);
-    }
-};
-
-exports.updateAddress = async (req, res, next) => {
-    try {
-        const data = await portalService.updateAddressService(
-            req.user.id,
-            req.params.id,
-            req.body
-        );
-        res.status(200).json({
-            success: true,
-            message: 'Address updated successfully.',
-            data
-        });
-    } catch (error) {
-        next(error);
-    }
-};
-
-exports.deleteAddress = async (req, res, next) => {
-    try {
-        const data = await portalService.deleteAddressService(
-            req.user.id,
-            req.params.id
-        );
-        res.status(200).json({ success: true, ...data });
-    } catch (error) {
-        next(error);
-    }
-};
-
-exports.submitKyc = async (req, res, next) => {
-    try {
-        const data = await portalService.submitKycService(req.user.id);
-        return res.status(200).json({ success: true, message: 'KYC submitted for review.', data });
-    } catch (error) {
-        return next(error);
-    }
-};
-
-exports.uploadKycDocument = async (req, res, next) => {
-    try {
-        const data = await kycDocumentService.uploadCustomerKycDocumentService(
-            req.user.id,
-            req.body.documentType,
-            req.file
-        );
-        return res.status(201).json({ success: true, message: 'KYC document uploaded.', data });
-    } catch (error) {
-        return next(error);
-    }
-};
-
-exports.listKycDocuments = async (req, res, next) => {
-    try {
-        const data = await kycDocumentService.listCustomerKycDocumentsService(req.user.id);
-        return res.status(200).json({ success: true, data });
-    } catch (error) {
-        return next(error);
-    }
-};
-
-exports.downloadKycDocument = async (req, res, next) => {
-    try {
-        const result = await kycDocumentService.getCustomerKycDocumentStreamService(req.user.id, req.params.documentId);
-        return streamKycDocument(result, res, next);
+        const document = await portalService.getKycDocumentContent(request.user.id, request.params.documentId);
+        return sendDocument(document, response);
     } catch (error) {
         return next(error);
     }

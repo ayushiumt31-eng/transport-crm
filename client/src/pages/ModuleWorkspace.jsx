@@ -8,6 +8,7 @@ import {
   CircleDashed,
   Database,
   Eye,
+  KeyRound,
   LoaderCircle,
   Plus,
   RefreshCw,
@@ -16,10 +17,11 @@ import {
   X
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import { useAuth } from '../auth/AuthContext';
+import LoginAccessDialog from '../components/common/LoginAccessDialog';
+import { apiFetch } from '../auth/session';
 import { moduleWorkspaceByPath } from '../config/moduleWorkspaces';
-
-const ADMIN_TOKEN_KEY = 'transport_admin_access_token';
-const CUSTOMER_TOKEN_KEY = 'transport_customer_access_token';
+import { readOnlyRoles } from '../config/navigation';
 
 function getValue(record, path) {
   return path.split('.').reduce((value, key) => value?.[key], record);
@@ -85,7 +87,8 @@ function initialValues(fields, record) {
   const result = {};
   fields.forEach((field) => {
     const currentValue = record ? getValue(record, field.name) : undefined;
-    const value = currentValue ?? '';
+    const rawValue = currentValue ?? '';
+    const value = field.type === 'date' && rawValue ? String(rawValue).slice(0, 10) : rawValue;
     setValue(result, field.name, value);
   });
   return result;
@@ -223,12 +226,15 @@ function buildColumns(workspace) {
 export default function ModuleWorkspace({ module, path = window.location.pathname }) {
   const config = moduleWorkspaceByPath[path];
   const Icon = module?.icon;
+  const { role } = useAuth();
+  const roleIsReadOnly = readOnlyRoles.includes(role);
   const workspace = useMemo(() => config ? ({
     ...config,
+    readOnly: config.readOnly || roleIsReadOnly,
     title: config.title || module?.name || 'Workspace',
     description: config.description || module?.description,
     fields: config.fields || []
-  }) : null, [config, module]);
+  }) : null, [config, module, roleIsReadOnly]);
   const columns = useMemo(() => workspace ? buildColumns(workspace) : [], [workspace]);
   const [records, setRecords] = useState([]);
   const [pagination, setPagination] = useState({ total: 0, page: 1, totalPages: 0 });
@@ -245,6 +251,8 @@ export default function ModuleWorkspace({ module, path = window.location.pathnam
   const [formRecord, setFormRecord] = useState(null);
   const [formOpen, setFormOpen] = useState(false);
   const [selectedRecord, setSelectedRecord] = useState(null);
+  const [loginRecord, setLoginRecord] = useState(null);
+  const loginAccess = !roleIsReadOnly ? workspace?.loginAccess : null;
 
   const statusField = workspace?.statusField || workspace?.fields.find((field) => ['status', 'vehicleStatus', 'driverStatus', 'allocationStatus'].includes(field.name));
   const statusOptions = workspace?.statusFilterOptions || statusField?.options || [];
@@ -266,20 +274,14 @@ export default function ModuleWorkspace({ module, path = window.location.pathnam
     if (statusFilter) params.set(statusField?.name || 'status', statusFilter);
     if (dateRange.startDate) params.set('startDate', dateRange.startDate);
     if (dateRange.endDate) params.set('endDate', dateRange.endDate);
-    const token = sessionStorage.getItem(ADMIN_TOKEN_KEY) || sessionStorage.getItem(CUSTOMER_TOKEN_KEY);
     setLoading(true);
     setError('');
     try {
-      const response = await fetch(`/api/v1/${workspace.endpoint}?${params.toString()}`, {
-        headers: {
-          Accept: 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {})
-        }
+      const result = await apiFetch(`/${workspace.endpoint}?${params.toString()}`).catch((requestError) => {
+        throw new Error(requestError.status === 404
+          ? `The ${workspace.title.toLowerCase()} API is not available yet (404).`
+          : requestError.message);
       });
-      const result = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw new Error(result.message || `Could not load ${workspace.title.toLowerCase()} (${response.status}).`);
-      }
       let nextRecords = normalizeRecords(result);
       if (workspace.kind === 'report' && nextRecords.length === 0) {
         const reportData = result?.data ?? result;
@@ -320,20 +322,7 @@ export default function ModuleWorkspace({ module, path = window.location.pathnam
   }, [loadRecords]);
 
   async function request(pathSuffix, options = {}) {
-    const token = sessionStorage.getItem(ADMIN_TOKEN_KEY) || sessionStorage.getItem(CUSTOMER_TOKEN_KEY);
-    const response = await fetch(`/api/v1/${workspace.endpoint}${pathSuffix}`, {
-      ...options,
-      headers: {
-        Accept: 'application/json',
-        ...(options.body ? { 'Content-Type': 'application/json' } : {}),
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        ...options.headers
-      },
-      body: options.body ? JSON.stringify(options.body) : undefined
-    });
-    const result = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(result.message || `Request failed (${response.status}).`);
-    return result;
+    return apiFetch(`/${workspace.endpoint}${pathSuffix}`, options);
   }
 
   async function saveRecord(values, record) {
@@ -469,9 +458,6 @@ export default function ModuleWorkspace({ module, path = window.location.pathnam
           <div className="min-w-0">
             <p className="font-semibold">{error}</p>
             <p className="mt-1 break-all text-rose-700/80">API endpoint: {apiPath}</p>
-            {workspace.endpoint.startsWith('drivers') && !sessionStorage.getItem(ADMIN_TOKEN_KEY) && (
-              <p className="mt-2">Driver APIs require admin sign-in. <Link to="/crm/customers" className="font-bold underline">Open admin OTP sign-in</Link>.</p>
-            )}
           </div>
           <button type="button" onClick={() => setError('')} aria-label="Dismiss error" className="ml-auto shrink-0"><X size={14} /></button>
         </div>
@@ -491,7 +477,7 @@ export default function ModuleWorkspace({ module, path = window.location.pathnam
           </div>
           {workspace.readOnly && (
             <span className="inline-flex w-fit items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-[10px] font-semibold text-slate-600">
-              <CircleDashed size={13} />Read-only report
+              <CircleDashed size={13} />{roleIsReadOnly ? 'View only' : 'Read-only report'}
             </span>
           )}
         </div>
@@ -535,6 +521,9 @@ export default function ModuleWorkspace({ module, path = window.location.pathnam
                     <td className="px-4 py-4">
                       <div className="flex justify-end gap-1">
                         <button type="button" onClick={() => setSelectedRecord(record)} aria-label={`View record ${id}`} className="rounded-lg p-2 text-slate-500 hover:bg-emerald-50 hover:text-emerald-800"><Eye size={14} /></button>
+                        {loginAccess && recordId(record) && (
+                          <button type="button" onClick={() => setLoginRecord(record)} aria-label={`Login access for ${id}`} className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-[10px] font-semibold text-emerald-800 hover:bg-emerald-50"><KeyRound size={13} />Login</button>
+                        )}
                         {!workspace.readOnly && (
                           <>
                             {workspace.allowEdit !== false && <button type="button" onClick={() => { setFormRecord(record); setFormOpen(true); }} disabled={!recordId(record)} aria-label={`Edit record ${id}`} className="rounded-lg px-2 py-1.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-100 disabled:opacity-40">Edit</button>}
@@ -568,6 +557,15 @@ export default function ModuleWorkspace({ module, path = window.location.pathnam
 
       {formOpen && <WorkspaceForm workspace={workspace} record={formRecord} onClose={() => { setFormOpen(false); setFormRecord(null); }} onSubmit={saveRecord} saving={saving} />}
       {selectedRecord && <RecordDetails record={selectedRecord} onClose={() => setSelectedRecord(null)} />}
+      {loginRecord && (
+        <LoginAccessDialog
+          role={loginAccess.role}
+          profileId={recordId(loginRecord)}
+          personName={getValue(loginRecord, loginAccess.name)}
+          suggestedLoginId={String(getValue(loginRecord, loginAccess.suggestedLoginId) || '')}
+          onClose={() => setLoginRecord(null)}
+        />
+      )}
     </div>
   );
 }

@@ -13,10 +13,12 @@ import {
   Trash2,
   X
 } from 'lucide-react';
+import { apiFetch } from '../../auth/session';
 
 const vehicleTypes = ['Truck', 'Trailer', 'Container', 'Pickup', 'Tempo', 'Tanker', 'Van', 'Other'];
 const fuelTypes = ['Diesel', 'Petrol', 'CNG', 'LNG', 'Electric', 'Hybrid', 'Other'];
-const statuses = ['Available', 'Allocated', 'OnTrip', 'UnderMaintenance', 'Inactive'];
+const vehicleStatuses = ['Available', 'Allocated', 'OnTrip', 'UnderMaintenance', 'Inactive'];
+const manageableStatuses = ['Available', 'UnderMaintenance', 'Inactive'];
 const units = ['Ton', 'KG', 'Litre'];
 const emptyForm = {
   registrationNumber: '',
@@ -44,21 +46,9 @@ const vehicleDocuments = [
   ['nationalPermit', 'National permit']
 ];
 
+// Fleet APIs require a super admin or manager login; apiFetch attaches the token.
 async function vehicleRequest(path, options = {}) {
-  const response = await fetch(`/api/v1/fleet/vehicles${path}`, {
-    ...options,
-    headers: {
-      Accept: 'application/json',
-      ...(options.body ? { 'Content-Type': 'application/json' } : {}),
-      ...options.headers
-    },
-    body: options.body ? JSON.stringify(options.body) : undefined
-  });
-  const result = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(result.message || `Vehicle request failed (${response.status})`);
-  }
-  return result;
+  return apiFetch(`/fleet/vehicles${path}`, options);
 }
 
 function statusTone(status) {
@@ -361,7 +351,7 @@ export default function VehicleManagement() {
           <label className="relative">
             <select value={vehicleStatus} onChange={(event) => { setVehicleStatus(event.target.value); setPage(1); }} className="w-full appearance-none rounded-xl border border-slate-200 bg-white py-2.5 pl-3 pr-9 text-xs font-semibold text-slate-700 outline-none focus:border-emerald-600 sm:w-48">
               <option value="">All statuses</option>
-              {statuses.map((status) => <option key={status} value={status}>{status}</option>)}
+              {vehicleStatuses.map((status) => <option key={status} value={status}>{status}</option>)}
             </select>
             <ChevronDown size={14} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" />
           </label>
@@ -425,8 +415,8 @@ export default function VehicleManagement() {
                   <td className="px-4 py-4 text-xs text-slate-700">{vehicle.ownershipType || '—'}</td>
                   <td className="px-4 py-4">
                     <label className="sr-only" htmlFor={`status-${vehicle._id}`}>Status for {vehicle.registrationNumber}</label>
-                    <select id={`status-${vehicle._id}`} value={vehicle.vehicleStatus} disabled={busyVehicle === vehicle._id} onChange={(event) => changeStatus(vehicle, event.target.value)} className={`max-w-44 rounded-full px-2.5 py-1.5 text-[10px] font-bold ring-1 ring-inset outline-none disabled:opacity-50 ${statusTone(vehicle.vehicleStatus)}`}>
-                      {statuses.map((status) => <option key={status} value={status}>{status}</option>)}
+                    <select id={`status-${vehicle._id}`} value={vehicle.vehicleStatus} disabled={busyVehicle === vehicle._id || ['Allocated', 'OnTrip'].includes(vehicle.vehicleStatus)} onChange={(event) => changeStatus(vehicle, event.target.value)} className={`max-w-44 rounded-full px-2.5 py-1.5 text-[10px] font-bold ring-1 ring-inset outline-none disabled:opacity-50 ${statusTone(vehicle.vehicleStatus)}`}>
+                      {[vehicle.vehicleStatus, ...manageableStatuses].filter((status, index, list) => list.indexOf(status) === index).map((status) => <option key={status} value={status}>{status}</option>)}
                     </select>
                   </td>
                   <td className="px-4 py-4 text-right">

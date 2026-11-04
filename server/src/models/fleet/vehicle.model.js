@@ -1,207 +1,67 @@
-
 const mongoose = require('mongoose');
 
-const { Schema } = mongoose;
+const vehicleDocumentSchema = new mongoose.Schema({
+    documentNumber: { type: String, trim: true, default: '', maxlength: 100 },
+    fileUrl: { type: String, trim: true, default: '', maxlength: 1000 },
+    issueDate: { type: Date, default: null },
+    expiryDate: { type: Date, default: null }
+}, { _id: false });
 
-// Reusable vehicle document schema
-const vehicleDocumentSchema = new Schema(
-    {
-        documentNumber: {
-            type: String,
-            trim: true,
-            default: ''
-        },
-        issueDate: {
-            type: Date,
-            default: null
-        },
-        expiryDate: {
-            type: Date,
-            default: null
-        },
-        fileUrl: {
-            type: String,
-            trim: true,
-            default: ''
-        },
-        isVerified: {
-            type: Boolean,
-            default: false
-        }
+const documentsSchema = new mongoose.Schema({
+    registrationCertificate: { type: vehicleDocumentSchema, default: () => ({}) },
+    insurance: { type: vehicleDocumentSchema, default: () => ({}) },
+    fitnessCertificate: { type: vehicleDocumentSchema, default: () => ({}) },
+    pollutionCertificate: { type: vehicleDocumentSchema, default: () => ({}) },
+    nationalPermit: { type: vehicleDocumentSchema, default: () => ({}) }
+}, { _id: false });
+
+const vehicleStatusHistorySchema = new mongoose.Schema({
+    status: {
+        type: String,
+        required: true,
+        enum: ['Available', 'Allocated', 'OnTrip', 'UnderMaintenance', 'Inactive']
     },
-    { _id: false }
-);
+    remarks: { type: String, trim: true, default: '', maxlength: 500 },
+    updatedBy: { type: String, required: true, maxlength: 100 },
+    role: { type: String, required: true, enum: ['admin', 'manager', 'driver'] },
+    createdAt: { type: Date, required: true, default: Date.now }
+}, { _id: false });
 
-const vehicleSchema = new Schema(
-    {
-        // Basic Vehicle Information
-        registrationNumber: {
-            type: String,
-            required: [true, 'Vehicle registration number is required'],
-            unique: true,
-            trim: true,
-            uppercase: true,
-            set: value => value?.replace(/\s+/g, '')
-        },
-
-        vehicleType: {
-            type: String,
-            required: [true, 'Vehicle type is required'],
-            enum: [
-                'Truck',
-                'Trailer',
-                'Container',
-                'Pickup',
-                'Tempo',
-                'Tanker',
-                'Van',
-                'Other'
-            ]
-        },
-
-        vehicleCategory: {
-            type: String,
-            trim: true,
-            default: ''
-        },
-
-        manufacturer: {
-            type: String,
-            trim: true,
-            required: [true, 'Vehicle manufacturer is required']
-        },
-
-        model: {
-            type: String,
-            trim: true,
-            required: [true, 'Vehicle model is required']
-        },
-
-        manufacturingYear: {
-            type: Number,
-            required: [true, 'Manufacturing year is required'],
-            min: [1950, 'Invalid manufacturing year'],
-            max: [new Date().getFullYear(), 'Manufacturing year cannot be in the future']
-        },
-
-        color: {
-            type: String,
-            trim: true,
-            default: ''
-        },
-
-        // Vehicle Capacity
-        capacity: {
-            value: {
-                type: Number,
-                required: [true, 'Vehicle capacity is required'],
-                min: [0.01, 'Capacity must be greater than zero']
-            },
-            unit: {
-                type: String,
-                enum: ['Ton', 'KG', 'Litre'],
-                default: 'Ton'
-            }
-        },
-
-        // Vehicle Technical Information
-        fuelType: {
-            type: String,
-            enum: ['Diesel', 'Petrol', 'CNG', 'LNG', 'Electric', 'Hybrid', 'Other'],
-            required: [true, 'Fuel type is required']
-        },
-
-        chassisNumber: {
-            type: String,
-            trim: true,
-            uppercase: true,
-            default: ''
-        },
-
-        engineNumber: {
-            type: String,
-            trim: true,
-            uppercase: true,
-            default: ''
-        },
-
-        ownershipType: {
-            type: String,
-            enum: ['Owned', 'Leased', 'Attached'],
-            default: 'Owned'
-        },
-
-        purchaseDate: {
-            type: Date,
-            default: null
-        },
-
-        // Vehicle Documents
-        documents: {
-            registrationCertificate: {
-                type: vehicleDocumentSchema,
-                default: () => ({})
-            },
-            insurance: {
-                type: vehicleDocumentSchema,
-                default: () => ({})
-            },
-            fitnessCertificate: {
-                type: vehicleDocumentSchema,
-                default: () => ({})
-            },
-            pollutionCertificate: {
-                type: vehicleDocumentSchema,
-                default: () => ({})
-            },
-            nationalPermit: {
-                type: vehicleDocumentSchema,
-                default: () => ({})
-            }
-        },
-
-        // Fleet Operational Status
-        vehicleStatus: {
-            type: String,
-            enum: [
-                'Available',
-                'Allocated',
-                'OnTrip',
-                'UnderMaintenance',
-                'Inactive'
-            ],
-            default: 'Available'
-        },
-
-        // Additional Information
-        notes: {
-            type: String,
-            trim: true,
-            default: ''
-        },
-
-        isDeleted: {
-            type: Boolean,
-            default: false
-        }
+const vehicleSchema = new mongoose.Schema({
+    registrationNumber: { type: String, required: true, trim: true, uppercase: true, minlength: 5, maxlength: 20 },
+    vehicleType: {
+        type: String,
+        required: true,
+        enum: ['Truck', 'Trailer', 'Container', 'Pickup', 'Tempo', 'Tanker', 'Van', 'Other']
     },
-    {
-        timestamps: true,
-        versionKey: false
-    }
-);
+    manufacturer: { type: String, required: true, trim: true, maxlength: 100 },
+    model: { type: String, required: true, trim: true, maxlength: 100 },
+    manufacturingYear: { type: Number, required: true, min: 1950 },
+    capacity: {
+        value: { type: Number, required: true, min: 0.01, max: 100000 },
+        unit: { type: String, required: true, enum: ['Ton', 'KG', 'Litre'] }
+    },
+    fuelType: { type: String, required: true, enum: ['Diesel', 'Petrol', 'CNG', 'LNG', 'Electric', 'Hybrid', 'Other'] },
+    ownershipType: { type: String, enum: ['Owned', 'Leased', 'Attached'], default: 'Owned' },
+    color: { type: String, trim: true, default: '', maxlength: 50 },
+    chassisNumber: { type: String, trim: true, uppercase: true, sparse: true, unique: true },
+    engineNumber: { type: String, trim: true, uppercase: true, sparse: true, unique: true },
+    purchaseDate: { type: Date, default: null },
+    notes: { type: String, trim: true, default: '', maxlength: 1000 },
+    documents: { type: documentsSchema, default: () => ({}) },
+    vehicleStatus: {
+        type: String,
+        required: true,
+        enum: ['Available', 'Allocated', 'OnTrip', 'UnderMaintenance', 'Inactive'],
+        default: 'Available'
+    },
+    isDeleted: { type: Boolean, default: false },
+    statusUpdatedAt: { type: Date, default: Date.now },
+    statusHistory: { type: [vehicleStatusHistorySchema], default: [] }
+}, { timestamps: true, versionKey: false });
 
-// Indexes
-vehicleSchema.index({ vehicleStatus: 1 });
-vehicleSchema.index({ vehicleType: 1 });
-vehicleSchema.index({ isDeleted: 1 });
-vehicleSchema.index({ chassisNumber: 1 }, {
-    unique: true,
-    partialFilterExpression: {
-        chassisNumber: { $gt: '' }
-    }
-});
+vehicleSchema.index({ registrationNumber: 1 }, { unique: true });
+vehicleSchema.index({ vehicleStatus: 1, isDeleted: 1 });
+vehicleSchema.index({ vehicleType: 1, vehicleStatus: 1 });
 
-const Vehicle = mongoose.model('Vehicle', vehicleSchema);
-
-exports.Vehicle = Vehicle;
+module.exports = mongoose.model('FleetVehicle', vehicleSchema);

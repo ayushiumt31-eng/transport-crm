@@ -234,6 +234,13 @@ const fields = {
     textarea('message', 'Message', { required: true }),
     select('status', 'Status', ['Queued', 'Sent', 'Delivered', 'Failed'])
   ],
+  manager: [
+    text('fullName', 'Full name', { required: true }),
+    text('phone', 'Mobile number (10 digits)', { required: true }),
+    text('email', 'Email'),
+    text('branch', 'Branch'),
+    select('status', 'Status', ['Active', 'Inactive'], { required: true })
+  ],
   setting: [
     text('name', 'Name', { required: true }),
     text('code', 'Code'),
@@ -275,7 +282,7 @@ const moduleSpecs = {
   '/drivers/licenses': ['drivers/licenses', 'license', 'Licence records', 'Driver licence classes, validity and expiry.'],
   '/drivers/documents': ['drivers/documents', 'driverDocument', 'Driver documents', 'Driver identity and compliance documents.'],
   '/drivers/attendance': ['drivers/attendance', 'attendance', 'Driver attendance', 'Daily driver attendance and check-in records.'],
-  '/drivers/performance': ['drivers/performance', 'report', 'Driver performance', 'Attendance-based metrics from recorded driver attendance. Trip performance will be available when trip records are connected.'],
+  '/drivers/performance': ['drivers/performance', 'report', 'Driver performance', 'Attendance and trip status totals. GPS-based distance and route efficiency will be available when tracking is connected.'],
   '/drivers/salary': ['drivers/payments', 'driverSalary', 'Driver payments', 'Driver salary, pay periods and settlement records.'],
   '/gps/live': ['gps/live', 'gps', 'Live vehicle locations', 'Latest location data reported by connected tracking devices.'],
   '/gps/route': ['gps/routes', 'gps', 'Route tracking', 'Location updates matched against planned trip routes.'],
@@ -308,8 +315,9 @@ const moduleSpecs = {
   '/reports/maintenance': ['reports/maintenance', 'report', 'Maintenance reports', 'Maintenance schedule, downtime and repair costs.'],
   '/reports/revenue': ['reports/revenue', 'report', 'Revenue reports', 'Revenue and booking totals for the selected period.'],
   '/reports/expense': ['reports/expense', 'report', 'Expense reports', 'Operating expenses by category and period.'],
-  '/reports/trip': ['reports/trip', 'report', 'Trip reports', 'Trip completion, delay and route summaries.'],
+  '/reports/trip': ['trips/metrics', 'report', 'Trip reports', 'Trip completion, delay and route summaries.'],
   '/reports/utilization': ['reports/utilization', 'report', 'Vehicle utilization', 'Vehicle assignment and active time reports.'],
+  '/settings/managers': ['admin/managers', 'manager', 'Manager accounts', 'Add transport managers, then use Login on each row to set their login ID and password. Set a manager to Inactive to block their login.'],
   '/settings/roles': ['settings/roles', 'setting', 'Roles & permissions', 'Application roles and permission assignments.'],
   '/settings/branches': ['settings/branches', 'setting', 'Branches', 'Operating branch details and branch status.'],
   '/settings/payment-gateway': ['settings/payment-gateway', 'setting', 'Payment gateway', 'Payment provider configuration references and activation state.'],
@@ -343,6 +351,7 @@ const fieldsByKind = {
   taxRecord: fields.taxRecord,
   expense: fields.expense,
   notification: fields.notification,
+  manager: fields.manager,
   setting: fields.setting,
   report: fields.report,
   generic: fields.generic
@@ -381,6 +390,7 @@ export const moduleWorkspaceByPath = Object.fromEntries(
         taxRecord: 'tax record',
         expense: 'expense',
         notification: 'notification',
+        manager: 'manager',
         setting: 'setting',
         report: 'report'
       }[kind] || 'record',
@@ -395,6 +405,17 @@ export const moduleWorkspaceByPath = Object.fromEntries(
         statusUpdateOptions: ['Released', 'Cancelled'],
         statusLockedValues: ['Released', 'Cancelled']
       } : {}),
+      ...(path === '/drivers/register' ? {
+        statusUpdateOptions: ['Available', 'OnLeave', 'Inactive', 'Suspended']
+      } : {}),
+      ...(path === '/drivers/licenses' ? {
+        statusUpdateOptions: ['Valid', 'UnderReview']
+      } : {}),
+      // Rows get a "Login" action to create/reset that person's login ID and password.
+      loginAccess: {
+        '/settings/managers': { role: 'manager', name: 'fullName', suggestedLoginId: 'phone' },
+        '/drivers/register': { role: 'driver', name: 'personalInfo.fullName', suggestedLoginId: 'contactInfo.phone' }
+      }[path] || null,
       fields: fieldsByKind[kind] || fields.generic,
       columns: path === '/fleet/allocation'
         ? [

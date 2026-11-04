@@ -171,6 +171,7 @@ const menuItems = [
     title: 'System Settings',
     icon: Settings,
     submenus: [
+      { name: 'Manager Accounts', path: '/settings/managers', description: 'Create transport manager logins and enable or disable their access.' },
       { name: 'User Roles & Permissions', path: '/settings/roles', description: 'Manage application roles and permissions.' },
       { name: 'Multi-Branch Management', path: '/settings/branches', description: 'Manage operating branches.' },
       { name: 'Payment Gateway Settings', path: '/settings/payment-gateway', description: 'Configure payment gateway settings.' },
@@ -181,7 +182,7 @@ const menuItems = [
 ];
 
 const pathsForRole = {
-  super_admin: menuItems.flatMap((item) => item.submenus?.map((submenu) => submenu.path) || []),
+  admin: menuItems.flatMap((item) => item.submenus?.map((submenu) => submenu.path) || []),
   manager: [
     '/crm/customers', '/crm/history', '/crm/feedback',
     '/bookings/vehicle', '/bookings/online', '/bookings/calendar', '/bookings/status',
@@ -200,8 +201,7 @@ const pathsForRole = {
   driver: [
     '/trips/assignment', '/trips/monitoring', '/trips/history',
     '/routes/distance',
-    '/fleet/allocation',
-    '/drivers/attendance',
+    '/drivers/licenses', '/drivers/documents', '/drivers/attendance', '/drivers/salary',
     '/gps/live', '/gps/route', '/gps/history', '/gps/speed', '/gps/alerts',
     '/maintenance/schedule', '/maintenance/repairs', '/maintenance/insurance', '/maintenance/fitness',
     '/notifications/trips'
@@ -225,19 +225,49 @@ function menuForRole(role) {
   ];
 }
 
+// Each login role gets its own panel. `value` matches the role in the API access token.
 export const panelOptions = [
-  { value: 'super_admin', label: 'Super Admin Panel' },
-  { value: 'manager', label: 'Transport Manager Panel' },
-  { value: 'driver', label: 'Driver Panel' },
-  { value: 'customer', label: 'Customer Panel' }
+  {
+    value: 'admin',
+    label: 'Super Admin Panel',
+    title: 'Super Admin',
+    description: 'Full access to every module, system settings and manager accounts.'
+  },
+  {
+    value: 'manager',
+    label: 'Transport Manager Panel',
+    title: 'Transport Manager',
+    description: 'Run daily operations: customers, bookings, fleet, drivers and reports.'
+  },
+  {
+    value: 'driver',
+    label: 'Driver Panel',
+    title: 'Driver',
+    description: 'See your trips, attendance, licence, documents and salary records.'
+  },
+  {
+    value: 'customer',
+    label: 'Customer Panel',
+    title: 'Customer',
+    description: 'Book vehicles, track shipments, manage your profile and KYC.'
+  }
 ];
 
+export const panelByRole = Object.fromEntries(panelOptions.map((panel) => [panel.value, panel]));
+
+// Roles that can only view records in the generic module workspaces (the API enforces this too).
+export const readOnlyRoles = ['driver'];
+
 export const roleMenus = {
-  super_admin: menuForRole('super_admin'),
+  admin: menuForRole('admin'),
   manager: menuForRole('manager'),
   driver: menuForRole('driver'),
   customer: menuForRole('customer')
 };
+
+export function canAccessPath(role, path) {
+  return (roleMenus[role] || []).some((item) => item.submenus?.some((submenu) => submenu.path === path));
+}
 
 export const moduleByPath = Object.fromEntries(
   menuItems.flatMap((item) =>

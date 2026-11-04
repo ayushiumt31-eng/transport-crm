@@ -1,9 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { CalendarClock, CheckCircle2, CircleDashed, FileText, LoaderCircle, PackageCheck, Plus, ShieldCheck, Truck, X } from 'lucide-react';
-import { Link, useLocation, useOutletContext } from 'react-router-dom';
+import { useLocation } from 'react-router-dom';
+import { useAuth } from '../../auth/AuthContext';
+import { apiFetch } from '../../auth/session';
 
-const CUSTOMER_TOKEN_KEY = 'transport_customer_access_token';
-const ADMIN_TOKEN_KEY = 'transport_admin_access_token';
 
 const defaultForm = {
   pickupAddress: {
@@ -42,29 +42,19 @@ const defaultForm = {
   }
 };
 
-async function apiRequest(path, options = {}, authRole = 'customer') {
-  const tokenKey = authRole === 'admin' ? ADMIN_TOKEN_KEY : CUSTOMER_TOKEN_KEY;
-  const token = sessionStorage.getItem(tokenKey) || '';
-  const headers = {
-    Accept: 'application/json',
-    ...(options.body && !(options.body instanceof FormData) ? { 'Content-Type': 'application/json' } : {}),
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    ...options.headers
-  };
+const STAFF_STATUS_TRANSITIONS = {
+  pending: ['under_review', 'rejected', 'cancelled'],
+  under_review: ['quoted', 'rejected', 'cancelled'],
+  quoted: ['confirmed', 'rejected', 'cancelled', 'expired'],
+  confirmed: ['cancelled'],
+  rejected: [],
+  cancelled: [],
+  expired: []
+};
 
-  const response = await fetch(`/api/v1${path}`, {
-    ...options,
-    headers,
-    body: options.body && !(options.body instanceof FormData) ? JSON.stringify(options.body) : options.body
-  });
-
-  const result = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const error = new Error(result.message || `Request failed (${response.status})`);
-    error.status = response.status;
-    throw error;
-  }
-
+// The signed-in user's token is attached by apiFetch; the API decides what each role may do.
+async function apiRequest(path, options = {}) {
+  const result = await apiFetch(path, options);
   return result.data ?? result;
 }
 
@@ -114,7 +104,7 @@ function badgeTone(status) {
 
 function BookingManagement() {
   const { pathname } = useLocation();
-  const { userRole = 'super_admin' } = useOutletContext() || {};
+  const { role: authRole } = useAuth();
   const [form, setForm] = useState(defaultForm);
   const [bookings, setBookings] = useState([]);
   const [statusFilter, setStatusFilter] = useState('');
@@ -125,14 +115,8 @@ function BookingManagement() {
   const [updating, setUpdating] = useState('');
   const [selectedDetails, setSelectedDetails] = useState(null);
   const [loadingDetails, setLoadingDetails] = useState('');
-  const role = userRole === 'customer'
-    ? sessionStorage.getItem(CUSTOMER_TOKEN_KEY) ? 'customer' : 'guest'
-    : sessionStorage.getItem(ADMIN_TOKEN_KEY)
-      ? 'admin'
-      : sessionStorage.getItem(CUSTOMER_TOKEN_KEY)
-        ? 'customer'
-        : 'guest';
-  const signInPath = userRole === 'customer' ? '/crm/portal' : '/crm/customers';
+  // Super admin and managers share the staff view; customers see only their own bookings.
+  const role = authRole === 'customer' ? 'customer' : 'admin';
   const showBookingForm = pathname === '/bookings/vehicle' || pathname === '/bookings/online';
   const canCreateBooking = role === 'customer';
   const pageTitle = pathname === '/bookings/calendar'
@@ -166,17 +150,11 @@ function BookingManagement() {
     try {
       setLoading(true);
       setError('');
-      const token = sessionStorage.getItem(CUSTOMER_TOKEN_KEY) || sessionStorage.getItem(ADMIN_TOKEN_KEY);
-      if (!token) {
-        setBookings([]);
-        return;
-      }
-
       if (role === 'admin') {
         const today = new Date();
         const startDate = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
         const endDate = new Date(today.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-        const response = await apiRequest(`/customers/booking/calendar?startDate=${startDate}&endDate=${endDate}`, {}, 'admin');
+        const response = await apiRequest(`/customers/booking/calendar?startDate=${startDate}&endDate=${endDate}`);
         setBookings(Array.isArray(response) ? response : response.bookings || []);
       } else {
         const response = await apiRequest('/customers/booking?page=1&limit=20');
@@ -206,11 +184,6 @@ function BookingManagement() {
 
   async function handleSubmit(event) {
     event.preventDefault();
-    if (!sessionStorage.getItem(CUSTOMER_TOKEN_KEY) && !sessionStorage.getItem(ADMIN_TOKEN_KEY)) {
-      setError('Please sign in first with a customer or admin token.');
-      return;
-    }
-
     setSubmitting(true);
     setError('');
     setNotice('');
@@ -258,7 +231,7 @@ function BookingManagement() {
       };
 
       const bookingType = pathname === '/bookings/online' ? 'online' : 'vehicle';
-      await apiRequest(`/customers/booking/${bookingType}`, { method: 'POST', body: payload }, 'customer');
+      await apiRequest(`/customers/booking/${bookingType}`, { method: 'POST', body: payload });
       setNotice('Booking request submitted successfully.');
       setForm(defaultForm);
       await loadBookings();
@@ -277,7 +250,7 @@ function BookingManagement() {
       await apiRequest(`/customers/booking/${bookingId}/status`, {
         method: 'PATCH',
         body: { status, remarks: `Booking status updated to ${status}` }
-      }, 'admin');
+      });
       setNotice(`Booking ${bookingId} status updated to ${status}.`);
       await loadBookings();
     } catch (requestError) {
@@ -296,8 +269,8 @@ function BookingManagement() {
     setError('');
     try {
       const [bookingResult, historyResult] = await Promise.all([
-        apiRequest(`/customers/booking/${bookingId}`, {}, 'customer'),
-        apiRequest(`/customers/booking/${bookingId}/history`, {}, 'customer')
+        apiRequest(`/customers/booking/${bookingId}`),
+        apiRequest(`/customers/booking/${bookingId}/history`)
       ]);
       setSelectedDetails({
         id: bookingId,
@@ -320,21 +293,9 @@ function BookingManagement() {
           <p className="mt-1 text-sm text-slate-600">{pageDescription}</p>
         </div>
         <div className="flex items-center gap-2 rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-800 border border-emerald-200">
-          <ShieldCheck size={16} /> {role === 'admin' ? 'Admin view' : role === 'customer' ? 'Customer view' : 'Sign-in required'}
+          <ShieldCheck size={16} /> {role === 'customer' ? 'Customer view' : authRole === 'manager' ? 'Manager view' : 'Admin view'}
         </div>
       </header>
-
-      {role === 'guest' && (
-        <div className="flex flex-col gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <p className="text-sm font-bold text-amber-950">Sign in to load or submit bookings</p>
-            <p className="mt-1 text-xs text-amber-900">Bookings are not shown until the API confirms your account.</p>
-          </div>
-          <Link to={signInPath} className="inline-flex w-fit items-center gap-2 rounded-lg bg-amber-900 px-3 py-2 text-xs font-bold text-white hover:bg-amber-950">
-            <ShieldCheck size={14} />Continue to sign in
-          </Link>
-        </div>
-      )}
 
       {error && (
         <div role="alert" className="flex items-start gap-2 border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">
@@ -356,8 +317,7 @@ function BookingManagement() {
 
       {showBookingForm && role === 'admin' && (
         <div className="rounded-xl border border-sky-200 bg-sky-50 p-4 text-sm text-sky-950">
-          Admins can review and update bookings here. To create a booking request, sign in through the Customer Portal.
-          <Link to="/crm/portal" className="ml-1 font-bold underline">Open Customer Portal</Link>
+          Staff can review and update bookings here. Booking requests are created by customers from the Customer login.
         </div>
       )}
 
@@ -481,7 +441,7 @@ function BookingManagement() {
                           disabled={updating === booking._id}
                           className="w-full rounded-md border border-slate-300 bg-white px-2 py-2 text-xs text-slate-800"
                         >
-                          {['pending', 'under_review', 'quoted', 'confirmed', 'rejected', 'cancelled', 'expired'].map((item) => (
+                          {[status, ...(STAFF_STATUS_TRANSITIONS[status] || [])].map((item) => (
                             <option key={item} value={item}>{item}</option>
                           ))}
                         </select>

@@ -12,8 +12,8 @@ import {
   Download,
   FileCheck2,
   FileText,
+  KeyRound,
   LoaderCircle,
-  LogOut,
   Mail,
   MapPin,
   MessageSquare,
@@ -25,40 +25,19 @@ import {
   Users,
   X
 } from 'lucide-react';
+import { apiFetch } from '../../auth/session';
+import LoginAccessDialog from '../../components/common/LoginAccessDialog';
 
-const TOKEN_KEY = 'transport_admin_access_token';
 const PAGE_SIZE = 10;
 
+// Signed-in staff token (super admin or manager) is attached by apiFetch.
 async function apiRequest(path, options = {}) {
-  const token = sessionStorage.getItem(TOKEN_KEY);
-  const headers = {
-    Accept: 'application/json',
-    ...(options.body ? { 'Content-Type': 'application/json' } : {}),
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    ...options.headers
-  };
-  const response = await fetch(`/api/v1${path}`, {
-    ...options,
-    headers,
-    body: options.body ? JSON.stringify(options.body) : undefined
-  });
-  const result = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const error = new Error(result.message || `Request failed (${response.status}).`);
-    error.status = response.status;
-    throw error;
-  }
+  const result = await apiFetch(path, options);
   return result.data;
 }
 
 async function downloadFile(path, filename) {
-  const response = await fetch(`/api/v1${path}`, {
-    headers: { Authorization: `Bearer ${sessionStorage.getItem(TOKEN_KEY) || ''}` }
-  });
-  if (!response.ok) {
-    const result = await response.json().catch(() => ({}));
-    throw new Error(result.message || `Download failed (${response.status}).`);
-  }
+  const response = await apiFetch(path, { raw: true });
   const objectUrl = URL.createObjectURL(await response.blob());
   const link = document.createElement('a');
   link.href = objectUrl;
@@ -132,80 +111,6 @@ function Metric({ label, value, icon: Icon, tone = 'green', onClick, active = fa
   );
 }
 
-function AdminOtpGate({ onAuthenticated }) {
-  const [otpSent, setOtpSent] = useState(false);
-  const [otp, setOtp] = useState('');
-  const [destination, setDestination] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
-  const [mockOtp, setMockOtp] = useState('');
-
-  async function sendOtp() {
-    setBusy(true);
-    setError('');
-    setMockOtp('');
-    try {
-      const data = await apiRequest('/admin/auth/send-otp', { method: 'POST', body: {} });
-      setDestination(data.phone || 'your configured admin phone');
-      setMockOtp(data.mockOtp || '');
-      setOtpSent(true);
-    } catch (requestError) {
-      setError(requestError.message);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function verifyOtp(event) {
-    event.preventDefault();
-    setBusy(true);
-    setError('');
-    try {
-      const data = await apiRequest('/admin/auth/verify-otp', { method: 'POST', body: { otp: otp.trim() } });
-      sessionStorage.setItem(TOKEN_KEY, data.accessToken);
-      onAuthenticated(data.accessToken);
-    } catch (requestError) {
-      setError(requestError.message);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <div className="mx-auto flex min-h-[65vh] max-w-5xl items-center justify-center">
-      <section className="grid w-full overflow-hidden border border-slate-200 bg-white shadow-sm md:grid-cols-2">
-        <div className="bg-slate-900 p-7 text-white sm:p-10">
-          <div className="flex items-center gap-2 text-emerald-300"><Users size={19} /><span className="text-xs font-bold uppercase tracking-[0.16em]">Customer operations</span></div>
-          <h1 className="mt-8 max-w-md text-3xl font-bold leading-tight">Customer Management</h1>
-          <p className="mt-3 max-w-md text-sm leading-6 text-slate-300">Review customer accounts, KYC status and follow-up activity.</p>
-          <div className="mt-9 flex items-center gap-2 text-xs text-slate-300"><ShieldCheck size={16} className="text-emerald-300" />Admin access uses a one-time code.</div>
-        </div>
-        <div className="p-6 sm:p-9">
-          <p className="text-xs font-bold uppercase tracking-[0.14em] text-emerald-700">Admin sign in</p>
-          <h2 className="mt-2 text-xl font-bold text-slate-900">{otpSent ? 'Enter your OTP' : 'Get a sign-in code'}</h2>
-          <p className="mt-2 text-sm text-slate-500">{otpSent ? `We sent a code to ${destination}.` : 'A one-time code will be sent to the configured admin phone.'}</p>
-          {error && <div role="alert" className="mt-5 flex items-start gap-2 border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800"><AlertCircle size={16} className="mt-0.5 shrink-0" />{error}</div>}
-          {otpSent ? (
-            <form onSubmit={verifyOtp} className="mt-6 space-y-4">
-              {mockOtp && <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900"><span className="font-semibold">Development OTP:</span> <span className="font-mono tracking-[0.2em]">{mockOtp}</span></div>}
-              <Field label="Six-digit OTP" value={otp} onChange={setOtp} placeholder="000000" />
-              <button type="submit" disabled={busy || otp.trim().length !== 6} className="inline-flex w-full items-center justify-center gap-2 rounded-md bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-800 disabled:opacity-50">
-                {busy ? <LoaderCircle size={16} className="animate-spin" /> : <ShieldCheck size={16} />}Verify and continue
-              </button>
-              <button type="button" onClick={sendOtp} disabled={busy} className="w-full rounded-md px-3 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-100 disabled:opacity-50">Resend code</button>
-              <p className="text-xs leading-5 text-slate-500">In development without SMS credentials, the mock code appears here and in the API terminal.</p>
-            </form>
-          ) : (
-            <button type="button" onClick={sendOtp} disabled={busy} className="mt-6 inline-flex w-full items-center justify-center gap-2 rounded-md bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-800 disabled:opacity-50">
-              {busy ? <LoaderCircle size={16} className="animate-spin" /> : <Phone size={16} />}Send OTP
-            </button>
-          )}
-        </div>
-      </section>
-    </div>
-  );
-}
-
 function CustomerDetail({ customer, activities, kycDocuments, loading, onClose, onChanged, onError }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState({});
@@ -218,6 +123,7 @@ function CustomerDetail({ customer, activities, kycDocuments, loading, onClose, 
   const [activityDescription, setActivityDescription] = useState('');
   const [followUpAt, setFollowUpAt] = useState('');
   const [busyAction, setBusyAction] = useState('');
+  const [loginOpen, setLoginOpen] = useState(false);
 
   useEffect(() => {
     setDraft({
@@ -277,23 +183,17 @@ function CustomerDetail({ customer, activities, kycDocuments, loading, onClose, 
     });
   }
 
-  const requiredDocumentTypes = [
-    'pan',
-    'address_proof',
-    ...(customer.customerType === 'business' && customer.gstin ? ['gstin'] : [])
-  ];
-  const latestDocuments = new Map();
-  kycDocuments.forEach((document) => {
-    if (!latestDocuments.has(document.documentType)) latestDocuments.set(document.documentType, document);
-  });
-  const requiredDocumentsVerified = requiredDocumentTypes.every((type) => latestDocuments.get(type)?.status === 'Verified');
+  const documentsVerified = kycDocuments.every((document) => document.status === 'Verified');
 
   return (
     <div className="fixed inset-0 z-[60] bg-slate-950/40 sm:inset-y-0 sm:left-auto sm:w-[min(48rem,92vw)]" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
       <section role="dialog" aria-modal="true" aria-labelledby="customer-detail-title" className="ml-auto flex h-full w-full flex-col overflow-hidden border-l border-slate-200 bg-slate-50 shadow-2xl">
         <header className="flex items-start justify-between gap-4 border-b border-slate-200 bg-white px-5 py-4">
           <div className="min-w-0"><p className="text-[11px] font-bold uppercase tracking-[0.14em] text-emerald-700">Customer record</p><h2 id="customer-detail-title" className="mt-1 truncate text-lg font-bold text-slate-900">{customer.companyName || customer.contactPerson || customer.phone}</h2><p className="mt-1 font-mono text-xs text-slate-500">{customer._id}</p></div>
-          <button type="button" onClick={onClose} aria-label="Close customer details" className="rounded-md p-2 text-slate-500 hover:bg-slate-100"><X size={18} /></button>
+          <div className="flex shrink-0 items-center gap-1">
+            <button type="button" onClick={() => setLoginOpen(true)} className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"><KeyRound size={13} />Login access</button>
+            <button type="button" onClick={onClose} aria-label="Close customer details" className="rounded-md p-2 text-slate-500 hover:bg-slate-100"><X size={18} /></button>
+          </div>
         </header>
 
         <div className="flex-1 space-y-4 overflow-y-auto p-4 sm:p-5">
@@ -351,8 +251,8 @@ function CustomerDetail({ customer, activities, kycDocuments, loading, onClose, 
 
           <section className="border border-slate-200 bg-white p-4">
             <div className="flex flex-wrap items-start justify-between gap-3">
-              <div><h3 className="flex items-center gap-2 text-sm font-bold text-slate-900"><FileText size={16} />KYC documents</h3><p className="mt-1 text-xs text-slate-500">Private files · PDF, JPEG or PNG · 5 MB maximum</p></div>
-              <Badge tone={requiredDocumentsVerified ? 'green' : 'amber'}>{requiredDocumentsVerified ? 'Required documents verified' : 'Documents need review'}</Badge>
+              <div><h3 className="flex items-center gap-2 text-sm font-bold text-slate-900"><FileText size={16} />KYC documents</h3><p className="mt-1 text-xs text-slate-500">Optional private files · PDF, JPEG or PNG · 5 MB maximum</p></div>
+              <Badge tone={documentsVerified ? 'green' : 'amber'}>{kycDocuments.length === 0 ? 'Optional documents not uploaded' : documentsVerified ? 'Documents verified' : 'Documents need review'}</Badge>
             </div>
             <label className="mt-3 block"><span className="mb-1 block text-[11px] font-semibold text-slate-600">Document review remarks</span><input value={documentRemarks} onChange={(event) => setDocumentRemarks(event.target.value)} maxLength={500} placeholder="Required when rejecting a document" className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100" /></label>
             <div className="mt-3 divide-y divide-slate-100">
@@ -374,7 +274,7 @@ function CustomerDetail({ customer, activities, kycDocuments, loading, onClose, 
             {customer.kycReviewedBy && <p className="mt-1 text-xs text-slate-500">Reviewer: {customer.kycReviewedBy}</p>}
             <label className="mt-3 block"><span className="mb-1 block text-[11px] font-semibold text-slate-600">Review remarks</span><textarea value={kycRemarks} onChange={(event) => setKycRemarks(event.target.value)} maxLength={500} rows="2" className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100" /></label>
             <div className="mt-3 flex flex-wrap gap-2">
-              <button type="button" disabled={customer.kycStatus !== 'Pending' || !requiredDocumentsVerified || busyAction === 'kyc'} onClick={() => reviewKyc('Verified')} className="inline-flex items-center gap-2 rounded-md bg-emerald-700 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-40"><BadgeCheck size={14} />Approve KYC</button>
+              <button type="button" disabled={customer.kycStatus !== 'Pending' || !documentsVerified || busyAction === 'kyc'} onClick={() => reviewKyc('Verified')} className="inline-flex items-center gap-2 rounded-md bg-emerald-700 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-40"><BadgeCheck size={14} />Approve KYC</button>
               <button type="button" disabled={customer.kycStatus !== 'Pending' || busyAction === 'kyc'} onClick={() => reviewKyc('Rejected')} className="inline-flex items-center gap-2 rounded-md border border-rose-300 px-3 py-2 text-xs font-semibold text-rose-800 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-40"><X size={14} />Reject KYC</button>
             </div>
           </section>
@@ -404,12 +304,20 @@ function CustomerDetail({ customer, activities, kycDocuments, loading, onClose, 
           </section>
         </div>
       </section>
+      {loginOpen && (
+        <LoginAccessDialog
+          role="customer"
+          profileId={customer._id}
+          personName={customer.companyName || customer.contactPerson || customer.phone}
+          suggestedLoginId={customer.phone || ''}
+          onClose={() => setLoginOpen(false)}
+        />
+      )}
     </div>
   );
 }
 
 export default function CustomerManagement() {
-  const [token, setToken] = useState(() => sessionStorage.getItem(TOKEN_KEY) || '');
   const [summary, setSummary] = useState(null);
   const [customers, setCustomers] = useState([]);
   const [pagination, setPagination] = useState({ page: 1, totalPages: 1, total: 0 });
@@ -434,7 +342,6 @@ export default function CustomerManagement() {
   }, [searchDraft]);
 
   useEffect(() => {
-    if (!token) return undefined;
     let active = true;
     const params = new URLSearchParams({ page: String(page), limit: String(PAGE_SIZE) });
     if (search) params.set('search', search);
@@ -450,14 +357,13 @@ export default function CustomerManagement() {
       .catch((error) => {
         if (!active) return;
         setPageError(error.message);
-        if (error.status === 401) { sessionStorage.removeItem(TOKEN_KEY); setToken(''); }
       })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [token, page, statusFilter, kycFilter, search, refreshKey]);
+  }, [page, statusFilter, kycFilter, search, refreshKey]);
 
   useEffect(() => {
-    if (!token || !selectedId) return undefined;
+    if (!selectedId) return undefined;
     let active = true;
     setDetailLoading(true);
     Promise.all([
@@ -469,22 +375,14 @@ export default function CustomerManagement() {
       .catch((error) => {
         if (!active) return;
         setPageError(error.message);
-        if (error.status === 401) { sessionStorage.removeItem(TOKEN_KEY); setToken(''); }
       })
       .finally(() => { if (active) setDetailLoading(false); });
     return () => { active = false; };
-  }, [token, selectedId, refreshKey]);
+  }, [selectedId, refreshKey]);
 
   function handleApiError(error) {
     setPageError(error.message);
-    if (error.status === 401) { sessionStorage.removeItem(TOKEN_KEY); setToken(''); }
   }
-
-  function signOut() {
-    sessionStorage.removeItem(TOKEN_KEY); setToken(''); setSelectedId(''); setSelectedCustomer(null);
-  }
-
-  if (!token) return <div>{pageError && <div role="alert" className="mb-4 border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">{pageError}</div>}<AdminOtpGate onAuthenticated={(value) => { setPageError(''); setToken(value); }} /></div>;
 
   return (
     <div className="mx-auto max-w-[1600px] space-y-6">
@@ -498,7 +396,6 @@ export default function CustomerManagement() {
         </div>
         <div className="flex flex-wrap gap-2">
           <button type="button" onClick={() => setRefreshKey((current) => current + 1)} disabled={loading} className="inline-flex items-center gap-2 rounded-md border border-slate-300 bg-white px-3.5 py-2.5 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50 disabled:opacity-50"><RefreshCw size={15} className={loading ? 'animate-spin' : ''} />Refresh</button>
-          <button type="button" onClick={signOut} className="inline-flex items-center gap-2 rounded-md border border-slate-300 bg-white px-3.5 py-2.5 text-sm font-semibold text-slate-700 shadow-sm hover:border-slate-400 hover:bg-slate-50"><LogOut size={15} />Sign out</button>
         </div>
       </header>
       {pageError && <div role="alert" className="flex items-start gap-2 border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800"><AlertCircle size={16} className="mt-0.5 shrink-0" />{pageError}</div>}
