@@ -38,6 +38,18 @@ exports.getBookingHistory = handle((request) => bookingService.getBookingHistory
     request.user
 ));
 
+exports.issueQuote = handle((request) => bookingService.issueQuote(
+    request.params.bookingId,
+    request.body,
+    request.user
+));
+
+exports.respondToQuote = handle((request) => bookingService.respondToQuote(
+    request.params.bookingId,
+    request.body,
+    request.user
+));
+
 exports.updateBookingStatus = handle((request) => bookingService.updateBookingStatus(
     request.params.bookingId,
     request.body,

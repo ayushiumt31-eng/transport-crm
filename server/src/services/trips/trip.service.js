@@ -6,6 +6,9 @@ const FleetVehicle = require('../../models/fleet/vehicle.model');
 const { VehicleAllocation } = require('../../models/fleet/vehicle-allocation.model');
 const { Trip, TripCounter } = require('../../models/trips/trip.model');
 const TripRoutePlan = require('../../models/trips/trip-route-plan.model');
+const { Shipment } = require('../../models/cargo/shipment.model');
+const routeService = require('../routes/route.service');
+const notificationService = require('../notifications/notification.service');
 
 const serviceError = (message, statusCode) => Object.assign(new Error(message), { statusCode });
 const ACTIVE_TRIP_STATUSES = ['Scheduled', 'Assigned', 'Starting', 'InProgress', 'Delayed', 'Completing', 'Cancelling'];
@@ -44,6 +47,16 @@ function populateTrip(query) {
         .populate('bookingId', 'bookingNumber bookingStatus pickupAddress deliveryAddress cargo schedule')
         .populate('vehicleId', 'registrationNumber vehicleType manufacturer model vehicleStatus')
         .populate('driverId', 'driverCode personalInfo.fullName contactInfo.phone driverStatus');
+}
+
+async function tripResultWithNotification(tripId, status, remarks = '') {
+    const result = await populateTrip(Trip.findById(tripId)).lean();
+    try {
+        await notificationService.publishTripEvent({ tripId, status, remarks });
+    } catch (error) {
+        notificationService.logPublishingFailure(`trip ${status}`, error);
+    }
+    return result;
 }
 
 async function findTrip(id, actor, options = {}) {
@@ -311,7 +324,7 @@ exports.createTrip = async (data, actor) => {
             tripStatus: 'Scheduled',
             statusHistory: [addHistory('Scheduled', actor, 'Trip scheduled from an active vehicle allocation.')]
         });
-        return populateTrip(Trip.findById(trip._id)).lean();
+        return tripResultWithNotification(trip._id, 'Scheduled');
     } catch (error) {
         if (error?.code === 11000) throw serviceError('This vehicle allocation already has a trip.', 409);
         throw error;
@@ -363,7 +376,7 @@ exports.assignTrip = async (id, data, actor) => {
             { new: true, runValidators: true }
         );
         if (!updated) throw serviceError('Trip changed in another request. Refresh and retry.', 409);
-        return populateTrip(Trip.findById(updated._id)).lean();
+        return tripResultWithNotification(updated._id, 'Assigned');
     } catch (error) {
         const restored = await Driver.findOneAndUpdate(
             { _id: claimedDriver._id, driverStatus: 'Assigned' },
@@ -392,7 +405,7 @@ exports.updateTripStatus = async (id, { tripStatus, remarks = '' }, actor) => {
     if (tripStatus === 'InProgress') {
         if (trip.tripStatus === 'Delayed') {
             await transitionTrip(trip, ['Delayed'], 'InProgress', actor, remarks || 'Trip resumed.', { delayReason: '' });
-            return populateTrip(Trip.findById(trip._id)).lean();
+            return tripResultWithNotification(trip._id, 'InProgress', remarks || 'Trip resumed.');
         }
         if (trip.tripStatus !== 'Assigned') throw serviceError('Only an assigned trip can be started.', 409);
         if (actor.role === 'driver' && String(trip.driverId?._id) !== String(actor.id)) {
@@ -438,17 +451,23 @@ exports.updateTripStatus = async (id, { tripStatus, remarks = '' }, actor) => {
             if (rollbackFailed) throw serviceError('Trip start failed and operational status could not be fully restored. Contact support.', 500);
             throw error;
         }
-        return populateTrip(Trip.findById(trip._id)).lean();
+        return tripResultWithNotification(trip._id, 'InProgress', remarks || 'Trip started.');
     }
 
     if (tripStatus === 'Delayed') {
         if (!['InProgress'].includes(trip.tripStatus)) throw serviceError('Only an in-progress trip can be delayed.', 409);
         await transitionTrip(trip, ['InProgress'], 'Delayed', actor, remarks, { delayReason: remarks });
-        return populateTrip(Trip.findById(trip._id)).lean();
+        return tripResultWithNotification(trip._id, 'Delayed', remarks);
     }
 
     if (tripStatus === 'Completed') {
         if (!['InProgress', 'Delayed'].includes(trip.tripStatus)) throw serviceError('Only an active trip can be completed.', 409);
+        const shipment = await Shipment.findOne({
+            bookingId: trip.bookingId?._id || trip.bookingId
+        }).select('shipmentStatus').lean();
+        if (shipment && shipment.shipmentStatus !== 'OutForDelivery') {
+            throw serviceError('Advance the linked shipment to OutForDelivery before completing the trip.', 409);
+        }
         const priorStatus = trip.tripStatus;
         await transitionTrip(trip, [priorStatus], 'Completing', actor, remarks || 'Delivery completed.');
         let vehicleReleased = false;
@@ -498,7 +517,7 @@ exports.updateTripStatus = async (id, { tripStatus, remarks = '' }, actor) => {
             if (rollbackFailed) throw serviceError('Trip completion failed and operational status could not be fully restored. Contact support.', 500);
             throw error;
         }
-        return populateTrip(Trip.findById(trip._id)).lean();
+        return tripResultWithNotification(trip._id, 'Completed', remarks || 'Delivery completed.');
     }
 
     if (tripStatus === 'Cancelled') {
@@ -550,7 +569,7 @@ exports.updateTripStatus = async (id, { tripStatus, remarks = '' }, actor) => {
             if (rollbackFailed) throw serviceError('Trip cancellation failed and operational status could not be fully restored. Contact support.', 500);
             throw error;
         }
-        return populateTrip(Trip.findById(trip._id)).lean();
+        return tripResultWithNotification(trip._id, 'Cancelled', remarks);
     }
 
     throw serviceError('Trip status transition is not supported.', 400);
@@ -593,7 +612,7 @@ exports.listRoutePlans = async (query, actor) => {
     filter.tripId = { $in: trips.map((trip) => trip._id) };
     const skip = (query.page - 1) * query.limit;
     const [data, total] = await Promise.all([
-        TripRoutePlan.find(filter).populate({
+        TripRoutePlan.find(filter).populate('routeCatalogId', 'routeNumber name origin destination distanceKm estimatedDurationMinutes').populate({
             path: 'tripId',
             select: 'tripNumber tripStatus scheduledAt expectedDeliveryAt bookingId vehicleId driverId',
             populate: [
@@ -619,13 +638,31 @@ exports.createRoutePlan = async (data, actor) => {
             throw serviceError('Planned route start must fall within the trip schedule dates.', 400);
         }
     }
+    const routeVehicle = data.routeCatalogId
+        ? await FleetVehicle.findById(trip.vehicleId).select('vehicleType').lean()
+        : null;
+    const routeSnapshot = data.routeCatalogId
+        ? await routeService.getRoutePlanSnapshot(data.routeCatalogId, routeVehicle?.vehicleType)
+        : {};
     try {
-        return await TripRoutePlan.create({
+        const plan = await TripRoutePlan.create({
             ...data,
+            ...routeSnapshot,
             createdBy: actorId(actor),
             updatedBy: actorId(actor)
         });
+        const updatedTrip = await Trip.findOneAndUpdate(
+            { _id: trip._id, tripStatus: { $in: ['Scheduled', 'Assigned'] } },
+            { $set: { routeId: routeSnapshot.routeId || data.routeId } },
+            { new: true }
+        );
+        if (!updatedTrip) {
+            await plan.deleteOne();
+            throw serviceError('Trip status changed while creating the route plan. Refresh and retry.', 409);
+        }
+        return plan.toObject();
     } catch (error) {
+        if (error?.statusCode) throw error;
         if (error?.code === 11000) throw serviceError('This trip already has a route plan.', 409);
         throw error;
     }
@@ -646,11 +683,45 @@ exports.updateRoutePlan = async (id, changes, actor) => {
             throw serviceError('Planned route start must fall within the trip schedule dates.', 400);
         }
     }
+    const routeSelectionChanged = changes.routeCatalogId !== undefined
+        && String(changes.routeCatalogId || '') !== String(plan.routeCatalogId || '');
+    if (!routeSelectionChanged && plan.routeCatalogId && changes.routeId
+        && changes.routeId !== plan.routeId) {
+        throw serviceError('The route reference is controlled by the linked saved route.', 400);
+    }
+    const routeVehicle = routeSelectionChanged && changes.routeCatalogId
+        ? await FleetVehicle.findById(trip.vehicleId).select('vehicleType').lean()
+        : null;
+    const routeSnapshot = routeSelectionChanged && changes.routeCatalogId
+        ? await routeService.getRoutePlanSnapshot(changes.routeCatalogId, routeVehicle?.vehicleType)
+        : {};
     for (const [key, value] of Object.entries(changes)) {
         if (key !== 'tripId') plan.set(key, value);
     }
+    if (routeSelectionChanged && changes.routeCatalogId) {
+        for (const [key, value] of Object.entries(routeSnapshot)) plan.set(key, value);
+    } else if (routeSelectionChanged && changes.routeCatalogId === null) {
+        plan.set({
+            routeCatalogId: null,
+            distanceKm: null,
+            estimatedDurationMinutes: null,
+            estimatedTollPaise: null,
+            routeSnapshot: null
+        });
+    }
     plan.updatedBy = actorId(actor);
     await plan.save();
+    if (changes.routeId !== undefined || routeSelectionChanged) {
+        const nextRouteId = routeSelectionChanged && changes.routeCatalogId
+            ? routeSnapshot.routeId
+            : (changes.routeId || plan.routeId || '');
+        const updatedTrip = await Trip.findOneAndUpdate(
+            { _id: trip._id, tripStatus: { $in: ['Scheduled', 'Assigned'] } },
+            { $set: { routeId: nextRouteId } },
+            { new: true }
+        );
+        if (!updatedTrip) throw serviceError('Trip status changed while updating the route plan. Refresh and retry.', 409);
+    }
     return plan.toObject();
 };
 

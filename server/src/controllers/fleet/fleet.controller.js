@@ -15,6 +15,7 @@ exports.updateVehicle = handle((request) => fleetService.updateVehicle(request.p
 exports.updateVehicleStatus = handle((request) => fleetService.updateVehicleStatus(request.params.id, request.body, request.user));
 exports.deleteVehicle = handle((request) => fleetService.deleteVehicle(request.params.id, request.user));
 exports.getFleetDashboard = handle(() => fleetService.getFleetDashboard());
+exports.getVehicleUtilization = handle((request) => fleetService.getVehicleUtilization(request.validated.query));
 exports.listAllocatableBookings = handle(() => fleetService.listAllocatableBookings());
 exports.listAllocatableVehicles = handle((request) => fleetService.listAllocatableVehicles(request.validated.query.bookingId));
 exports.listAllocations = handle((request) => fleetService.listAllocations(request.validated.query));

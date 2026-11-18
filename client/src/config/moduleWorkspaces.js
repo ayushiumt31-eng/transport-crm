@@ -317,7 +317,7 @@ const moduleSpecs = {
   '/reports/expense': ['reports/expense', 'report', 'Expense reports', 'Operating expenses by category and period.'],
   '/reports/trip': ['trips/metrics', 'report', 'Trip reports', 'Trip completion, delay and route summaries.'],
   '/reports/utilization': ['reports/utilization', 'report', 'Vehicle utilization', 'Vehicle assignment and active time reports.'],
-  '/settings/managers': ['admin/managers', 'manager', 'Manager accounts', 'Add transport managers, then use Login on each row to set their login ID and password. Set a manager to Inactive to block their login.'],
+  '/settings/managers': ['admin/managers', 'manager', 'Manager accounts', 'Add transport managers, then use Login on each row to set their email or login ID and password. Set a manager to Inactive to block their login.'],
   '/settings/roles': ['settings/roles', 'setting', 'Roles & permissions', 'Application roles and permission assignments.'],
   '/settings/branches': ['settings/branches', 'setting', 'Branches', 'Operating branch details and branch status.'],
   '/settings/payment-gateway': ['settings/payment-gateway', 'setting', 'Payment gateway', 'Payment provider configuration references and activation state.'],

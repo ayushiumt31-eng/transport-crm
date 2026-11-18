@@ -3,6 +3,7 @@ const Booking = require('../../models/bookings/booking.model').Booking;
 const FleetVehicle = require('../../models/fleet/vehicle.model');
 const { VehicleAllocation, VehicleAllocationCounter } = require('../../models/fleet/vehicle-allocation.model');
 const { Trip } = require('../../models/trips/trip.model');
+const { MaintenanceRecord } = require('../../models/maintenance/maintenance-record.model');
 
 const serviceError = (message, statusCode) => Object.assign(new Error(message), { statusCode });
 const ALLOCATABLE_BOOKING_STATUSES = ['confirmed'];
@@ -138,6 +139,12 @@ exports.updateVehicleStatus = async (id, { vehicleStatus, remarks = '' }, actor)
     if (!mongoose.isValidObjectId(id)) throw serviceError('Invalid vehicle ID.', 400);
     const vehicle = await FleetVehicle.findOne({ _id: id, isDeleted: false });
     if (!vehicle) throw serviceError('Vehicle not found.', 404);
+    if (vehicle.vehicleStatus === 'UnderMaintenance' && vehicleStatus !== 'UnderMaintenance') {
+        const activeMaintenance = await MaintenanceRecord.exists({ vehicleId: vehicle._id, status: 'InProgress' });
+        if (activeMaintenance) {
+            throw serviceError('Complete the active maintenance record to return this vehicle to service.', 409);
+        }
+    }
     if (['Allocated', 'OnTrip'].includes(vehicle.vehicleStatus)) {
         throw serviceError('Release or complete the active allocation before changing vehicle status.', 409);
     }
@@ -158,6 +165,8 @@ exports.deleteVehicle = async (id, actor) => {
     if (!mongoose.isValidObjectId(id)) throw serviceError('Invalid vehicle ID.', 400);
     const vehicle = await FleetVehicle.findOne({ _id: id, isDeleted: false });
     if (!vehicle) throw serviceError('Vehicle not found.', 404);
+    const activeMaintenance = await MaintenanceRecord.exists({ vehicleId: vehicle._id, status: 'InProgress' });
+    if (activeMaintenance) throw serviceError('Complete the active maintenance record before deleting this vehicle.', 409);
     if (['Allocated', 'OnTrip'].includes(vehicle.vehicleStatus)) {
         throw serviceError('Release the active allocation before deleting this vehicle.', 409);
     }
@@ -203,6 +212,105 @@ exports.getFleetDashboard = async () => {
         total: 0, available: 0, allocated: 0, onTrip: 0, underMaintenance: 0, inactive: 0
     };
     return { summary: { ...summary, activeAllocations }, vehicleTypeBreakdown };
+};
+
+exports.getVehicleUtilization = async ({ startDate, endDate }) => {
+    const periodStart = new Date(`${startDate}T00:00:00.000Z`);
+    const requestedEnd = new Date(`${endDate}T23:59:59.999Z`);
+    const now = new Date();
+    const periodEnd = requestedEnd < now ? requestedEnd : now;
+    const vehicles = await FleetVehicle.find({})
+        .select('registrationNumber vehicleType vehicleStatus isDeleted')
+        .sort({ registrationNumber: 1, _id: 1 })
+        .lean();
+
+    if (periodStart >= periodEnd) {
+        return {
+            period: { startDate, endDate, measuredThrough: periodEnd },
+            trackedTripHours: 0,
+            tripCount: 0,
+            vehiclesWithTripActivity: 0,
+            vehicles: vehicles.map((vehicle) => ({
+                vehicleId: String(vehicle._id),
+                registrationNumber: vehicle.registrationNumber,
+                vehicleType: vehicle.vehicleType,
+                vehicleStatus: vehicle.vehicleStatus,
+                isDeleted: vehicle.isDeleted,
+                tripCount: 0,
+                trackedTripHours: 0
+            }))
+        };
+    }
+
+    const usage = await Trip.aggregate([
+        {
+            $match: {
+                tripStatus: { $in: ['Completed', 'InProgress', 'Delayed'] },
+                actualStartedAt: { $ne: null, $lte: periodEnd },
+                $or: [
+                    { actualCompletedAt: { $gte: periodStart } },
+                    { actualCompletedAt: null, tripStatus: { $in: ['InProgress', 'Delayed'] } }
+                ]
+            }
+        },
+        {
+            $project: {
+                vehicleId: 1,
+                actualStart: {
+                    $cond: [
+                        { $lt: ['$actualStartedAt', periodStart] },
+                        periodStart,
+                        '$actualStartedAt'
+                    ]
+                },
+                actualEnd: {
+                    $cond: [
+                        { $and: [
+                            { $ne: ['$actualCompletedAt', null] },
+                            { $lt: ['$actualCompletedAt', periodEnd] }
+                        ] },
+                        '$actualCompletedAt',
+                        periodEnd
+                    ]
+                }
+            }
+        },
+        {
+            $project: {
+                vehicleId: 1,
+                durationMs: { $max: [0, { $subtract: ['$actualEnd', '$actualStart'] }] }
+            }
+        },
+        {
+            $group: {
+                _id: '$vehicleId',
+                tripCount: { $sum: { $cond: [{ $gt: ['$durationMs', 0] }, 1, 0] } },
+                trackedTripMilliseconds: { $sum: '$durationMs' }
+            }
+        }
+    ]);
+
+    const usageByVehicle = new Map(usage.map((item) => [String(item._id), item]));
+    const reportVehicles = vehicles.map((vehicle) => {
+        const item = usageByVehicle.get(String(vehicle._id));
+        return {
+            vehicleId: String(vehicle._id),
+            registrationNumber: vehicle.registrationNumber,
+            vehicleType: vehicle.vehicleType,
+            vehicleStatus: vehicle.vehicleStatus,
+            isDeleted: vehicle.isDeleted,
+            tripCount: item?.tripCount || 0,
+            trackedTripHours: Math.round((item?.trackedTripMilliseconds || 0) / 3.6) / 1000000
+        };
+    });
+
+    return {
+        period: { startDate, endDate, measuredThrough: periodEnd },
+        trackedTripHours: Math.round(reportVehicles.reduce((total, item) => total + item.trackedTripHours, 0) * 1000000) / 1000000,
+        tripCount: reportVehicles.reduce((total, item) => total + item.tripCount, 0),
+        vehiclesWithTripActivity: reportVehicles.filter((item) => item.tripCount > 0).length,
+        vehicles: reportVehicles
+    };
 };
 
 exports.listAllocatableVehicles = async (bookingId) => {

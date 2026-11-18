@@ -61,7 +61,11 @@ const driverSchema = new mongoose.Schema({
 driverSchema.index({ driverCode: 1 }, { unique: true });
 driverSchema.index(
     { 'contactInfo.phone': 1 },
-    { unique: true, partialFilterExpression: { 'contactInfo.phone': { $type: 'string', $gt: '' } } }
+    {
+        name: 'driver_phone_unique_active',
+        unique: true,
+        partialFilterExpression: { 'contactInfo.phone': { $type: 'string', $gt: '' } }
+    }
 );
 driverSchema.index({ driverStatus: 1, isDeleted: 1 });
 

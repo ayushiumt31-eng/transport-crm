@@ -2,6 +2,13 @@ const Joi = require('joi');
 
 const objectId = Joi.string().pattern(/^[0-9a-fA-F]{24}$/).required();
 const currentYear = new Date().getUTCFullYear();
+const dateOnly = Joi.string().pattern(/^\d{4}-\d{2}-\d{2}$/).custom((value, helpers) => {
+    const parsed = new Date(`${value}T00:00:00.000Z`);
+    if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== value) {
+        return helpers.error('date.format');
+    }
+    return value;
+});
 
 const vehicleDocumentSchema = Joi.object({
     documentNumber: Joi.string().trim().max(100).allow(''),
@@ -70,6 +77,17 @@ exports.allocationListQuerySchema = Joi.object({
     limit: Joi.number().integer().min(1).max(100).default(20),
     allocationStatus: Joi.string().valid('Allocated', 'Released', 'Cancelled', '')
 }).unknown(false);
+exports.utilizationQuerySchema = Joi.object({
+    startDate: dateOnly.required(),
+    endDate: dateOnly.required()
+}).unknown(false).custom((value, helpers) => {
+    if (value.startDate > value.endDate) return helpers.error('fleet.dateRange');
+    if (value.endDate > new Date().toISOString().slice(0, 10)) return helpers.error('fleet.futureDate');
+    return value;
+}).messages({
+    'fleet.dateRange': 'End date must be on or after start date.',
+    'fleet.futureDate': 'Utilization report dates cannot be in the future.'
+});
 exports.allocationStatusSchema = Joi.object({
     allocationStatus: Joi.string().valid('Released', 'Cancelled').required(),
     remarks: Joi.string().trim().max(500).allow('')

@@ -58,8 +58,7 @@ const documentSchema = Joi.object({
     documentType: Joi.string().valid('DrivingLicence', 'IdentityProof', 'AddressProof', 'MedicalCertificate', 'Other').required(),
     documentNumber: Joi.string().trim().max(100).allow(''),
     issueDate: optionalDate,
-    expiryDate: optionalDate,
-    fileUrl: Joi.string().uri({ scheme: ['https'] }).max(1000).allow('')
+    expiryDate: optionalDate
 }).unknown(false).custom((value, helpers) => {
     if (value.issueDate && value.expiryDate && value.expiryDate < value.issueDate) {
         return helpers.error('driverDocument.dateRange');

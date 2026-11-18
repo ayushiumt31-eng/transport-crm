@@ -21,9 +21,28 @@ exports.updateLicense = handle((request) => driverService.updateLicense(request.
 exports.updateLicenseStatus = handle((request) => driverService.updateLicenseStatus(request.params.id, request.body, request.user));
 exports.deleteLicense = handle((request) => driverService.deleteLicense(request.params.id, request.user));
 exports.listDocuments = handle((request) => driverService.listDocuments(request.validated.query, request.user));
-exports.createDocument = handle((request) => driverService.createDocument(request.body, request.user), 201);
+exports.createDocument = handle((request) => driverService.createDocument(request.body, request.user, request.file), 201);
 exports.updateDocument = handle((request) => driverService.updateDocument(request.params.id, request.body, request.user));
 exports.deleteDocument = handle((request) => driverService.deleteDocument(request.params.id, request.user));
+exports.downloadDocument = async (request, response, next) => {
+    try {
+        const document = await driverService.getDocumentContent(request.params.id, request.user);
+        const filename = document.originalName.replace(/["\\\r\n]/g, '_');
+        const content = Buffer.isBuffer(document.content)
+            ? document.content
+            : Buffer.from(document.content.buffer).subarray(0, document.size);
+        response.set({
+            'Content-Type': document.contentType,
+            'Content-Length': document.size,
+            'Content-Disposition': `attachment; filename="${filename}"`,
+            'Cache-Control': 'private, no-store',
+            'X-Content-Type-Options': 'nosniff'
+        });
+        return response.end(content);
+    } catch (error) {
+        return next(error);
+    }
+};
 exports.listAttendance = handle((request) => driverService.listAttendance(request.validated.query, request.user));
 exports.createAttendance = handle((request) => driverService.createAttendance(request.body, request.user), 201);
 exports.updateAttendance = handle((request) => driverService.updateAttendance(request.params.id, request.body, request.user));

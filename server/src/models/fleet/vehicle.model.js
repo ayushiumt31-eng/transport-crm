@@ -15,6 +15,16 @@ const documentsSchema = new mongoose.Schema({
     nationalPermit: { type: vehicleDocumentSchema, default: () => ({}) }
 }, { _id: false });
 
+const vehicleDocumentHistorySchema = new mongoose.Schema({
+    documentType: { type: String, enum: ['insurance', 'fitnessCertificate'], required: true },
+    documentNumber: { type: String, trim: true, default: '', maxlength: 100 },
+    issueDate: { type: Date, default: null },
+    expiryDate: { type: Date, required: true },
+    updatedBy: { type: String, required: true, maxlength: 100 },
+    role: { type: String, required: true, enum: ['admin', 'manager'] },
+    createdAt: { type: Date, required: true, default: Date.now }
+}, { _id: false });
+
 const vehicleStatusHistorySchema = new mongoose.Schema({
     status: {
         type: String,
@@ -49,12 +59,15 @@ const vehicleSchema = new mongoose.Schema({
     purchaseDate: { type: Date, default: null },
     notes: { type: String, trim: true, default: '', maxlength: 1000 },
     documents: { type: documentsSchema, default: () => ({}) },
+    documentHistory: { type: [vehicleDocumentHistorySchema], default: [] },
     vehicleStatus: {
         type: String,
         required: true,
         enum: ['Available', 'Allocated', 'OnTrip', 'UnderMaintenance', 'Inactive'],
         default: 'Available'
     },
+    lastFuelOdometerKm: { type: Number, default: null, min: 0 },
+    lastFuelRecordedAt: { type: Date, default: null },
     isDeleted: { type: Boolean, default: false },
     statusUpdatedAt: { type: Date, default: Date.now },
     statusHistory: { type: [vehicleStatusHistorySchema], default: [] }

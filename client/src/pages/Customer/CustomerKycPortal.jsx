@@ -31,6 +31,7 @@ function StatusBadge({ status }) {
 }
 
 export default function CustomerKycPortal() {
+  const profileSectionRef = React.useRef(null);
   const [customer, setCustomer] = useState(null);
   const [dashboard, setDashboard] = useState(null);
   const [addresses, setAddresses] = useState([]);
@@ -173,6 +174,7 @@ export default function CustomerKycPortal() {
   async function submitKyc() {
     if (missingKycFields.length > 0) {
       setError(`Complete these fields before submitting KYC: ${missingKycFields.join(', ')}.`);
+      profileSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       return;
     }
 
@@ -216,7 +218,7 @@ export default function CustomerKycPortal() {
       </section>
       {error && <div role="alert" className="flex items-start gap-2 border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800"><AlertCircle size={16} className="mt-0.5 shrink-0" />{error}</div>}
       {notice && <div role="status" className="flex items-center gap-2 border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900"><Check size={16} />{notice}</div>}
-      <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
+      <section ref={profileSectionRef} className="scroll-mt-6 rounded-lg border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
         <div className="mb-5 flex items-center justify-between gap-3"><div><h2 className="text-base font-bold text-slate-950">Customer profile</h2><p className="mt-1 text-xs text-slate-500">Signed in as {customer?.phone}</p></div><BadgeCheck size={19} className="text-emerald-700" /></div>
         <form onSubmit={saveProfile} className="space-y-4">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2"><Field label="Company / customer name" value={profile.companyName} onChange={(value) => setProfile((current) => ({ ...current, companyName: value }))} required /><Field label="Contact person" value={profile.contactPerson} onChange={(value) => setProfile((current) => ({ ...current, contactPerson: value }))} required /><Field label="Email" type="email" value={profile.email} onChange={(value) => setProfile((current) => ({ ...current, email: value }))} required /><Field label="GSTIN (business)" value={profile.gstin} onChange={(value) => setProfile((current) => ({ ...current, gstin: value.toUpperCase() }))} /><Field label="Street address" value={profile.address.street} onChange={(value) => updateAddress('street', value)} required /><Field label="City" value={profile.address.city} onChange={(value) => updateAddress('city', value)} required /><Field label="State" value={profile.address.state} onChange={(value) => updateAddress('state', value)} required /><Field label="Pincode" value={profile.address.pincode} onChange={(value) => updateAddress('pincode', value)} required /></div>
@@ -270,7 +272,7 @@ export default function CustomerKycPortal() {
           <label className="block max-w-md"><span className="mb-1.5 block text-xs font-semibold text-slate-700">PAN card number</span><input type="text" value={profile.pan} onChange={(event) => setProfile((current) => ({ ...current, pan: event.target.value.toUpperCase().slice(0, 10) }))} placeholder="ABCDE1234F" maxLength={10} required autoCapitalize="characters" aria-describedby="pan-number-help" className="w-full rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm uppercase text-slate-900 outline-none focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100" /><span id="pan-number-help" className="mt-1.5 block text-[11px] text-slate-500">Format: 10 characters — 5 letters, 4 digits, then 1 letter.</span></label>
           <button type="submit" disabled={busy || !profile.pan.trim()} className="mt-3 inline-flex items-center gap-2 rounded-md border border-emerald-700 bg-white px-3.5 py-2 text-xs font-semibold text-emerald-800 hover:bg-emerald-50 disabled:opacity-50">{busy ? <LoaderCircle size={14} className="animate-spin" /> : <Check size={14} />}Save PAN number</button>
         </form>
-        <div className="mt-5 flex flex-col justify-between gap-3 border-t border-slate-200 pt-4 sm:flex-row sm:items-center"><div><p className="text-xs text-slate-600">{customer?.kycStatus === 'Pending' ? 'Your KYC is awaiting review.' : customer?.kycStatus === 'Verified' ? 'Your KYC has already been verified.' : 'File uploads are optional. Submitting saves your completed profile and PAN for review.'}</p>{missingKycFields.length > 0 && <p className="mt-1 text-xs text-amber-800">Still needed: {missingKycFields.join(', ')}.</p>}</div><button type="button" onClick={submitKyc} disabled={busy || missingKycFields.length > 0 || ['Pending', 'Verified'].includes(customer?.kycStatus)} className="inline-flex items-center justify-center gap-2 rounded-md bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-45"><ShieldCheck size={15} />Submit KYC for review</button></div>
+        <div className="mt-5 flex flex-col justify-between gap-3 border-t border-slate-200 pt-4 sm:flex-row sm:items-center"><div><p className="text-xs text-slate-600">{customer?.kycStatus === 'Pending' ? 'Your KYC is awaiting review.' : customer?.kycStatus === 'Verified' ? 'Your KYC has already been verified.' : 'File uploads are optional. Submit to check your details and send your completed profile for review.'}</p>{missingKycFields.length > 0 && <p className="mt-1 text-xs text-amber-800">Still needed: {missingKycFields.join(', ')}. Click Submit KYC to see these fields in your profile.</p>}</div><button type="button" onClick={submitKyc} disabled={busy || ['Pending', 'Verified'].includes(customer?.kycStatus)} className="inline-flex items-center justify-center gap-2 rounded-md bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-45"><ShieldCheck size={15} />Submit KYC for review</button></div>
       </section>
     </div>
   );

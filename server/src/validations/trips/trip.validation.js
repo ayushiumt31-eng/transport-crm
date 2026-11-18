@@ -41,18 +41,31 @@ const tripStatusSchema = Joi.object({
     return value;
 }).messages({ 'trip.remarksRequired': 'A reason is required when delaying or cancelling a trip.' });
 
-const routePlanSchema = Joi.object({
+const routePlanFields = {
     tripId: objectId,
-    routeId: Joi.string().trim().min(2).max(100).required(),
+    routeCatalogId: Joi.string().pattern(/^[0-9a-fA-F]{24}$/).allow(null),
+    routeId: Joi.string().trim().min(2).max(100).allow(''),
     waypoints: Joi.string().trim().max(5000).allow(''),
     plannedStartDate: Joi.date().iso().allow(null),
     notes: Joi.string().trim().max(2000).allow('')
-}).unknown(false);
+};
 
-const routePlanUpdateSchema = routePlanSchema.fork(
-    Object.keys(routePlanSchema.describe().keys),
+const routePlanSchema = Joi.object(routePlanFields).unknown(false).custom((value, helpers) => {
+    if (!value.routeCatalogId && !value.routeId?.trim()) {
+        return helpers.error('trip.routeRequired');
+    }
+    return value;
+}).messages({ 'trip.routeRequired': 'Select a saved route or enter a route reference.' });
+
+const routePlanUpdateSchema = Joi.object(routePlanFields).fork(
+    Object.keys(routePlanFields),
     (field) => field.optional()
-).min(1);
+).min(1).unknown(false).custom((value, helpers) => {
+    if ('routeCatalogId' in value && !value.routeCatalogId && !value.routeId?.trim()) {
+        return helpers.error('trip.routeRequired');
+    }
+    return value;
+}).messages({ 'trip.routeRequired': 'Select a saved route or enter a route reference.' });
 
 exports.listQuerySchema = listQuerySchema;
 exports.tripCreateSchema = tripCreateSchema;

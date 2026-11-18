@@ -9,10 +9,21 @@ const { ensureAdminAccount } = require('./services/auth/auth.service');
 const authRoutes = require('./routes/auth.routes');
 const customerManagementRoutes = require('./routes/customers/management.routes');
 const customerPortalRoutes = require('./routes/customers/portal.routes');
+const customerFeedbackRoutes = require('./routes/customers/feedback.routes');
 const bookingRoutes = require('./routes/bookings/booking.routes');
 const fleetRoutes = require('./routes/fleet/fleet.routes');
 const driverRoutes = require('./routes/drivers/driver.routes');
 const tripRoutes = require('./routes/trips/trip.routes');
+const shipmentRoutes = require('./routes/cargo/shipment.routes');
+const billingRoutes = require('./routes/billing/invoice.routes');
+const expenseRoutes = require('./routes/billing/expense.routes');
+const fuelRoutes = require('./routes/fuel/fuel.routes');
+const maintenanceRoutes = require('./routes/maintenance/maintenance.routes');
+const routeRoutes = require('./routes/routes/route.routes');
+const gpsRoutes = require('./routes/gps/gps.routes');
+const notificationRoutes = require('./routes/notifications/notification.routes');
+const backupRoutes = require('./routes/settings/backup.routes');
+const backupService = require('./services/settings/backup.service');
 
 const app = express();
 const allowedOrigins = new Set(
@@ -46,10 +57,20 @@ app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(openApiSpec, {
 app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/customers/management', customerManagementRoutes);
 app.use('/api/v1/customers/portal', customerPortalRoutes);
+app.use('/api/v1/customers/feedback', customerFeedbackRoutes);
 app.use('/api/v1/customers/booking', bookingRoutes);
 app.use('/api/v1/fleet/vehicles', fleetRoutes);
 app.use('/api/v1/drivers', driverRoutes);
 app.use('/api/v1/trips', tripRoutes);
+app.use('/api/v1/cargo', shipmentRoutes);
+app.use('/api/v1/billing', billingRoutes);
+app.use('/api/v1/billing/expenses', expenseRoutes);
+app.use('/api/v1/fuel', fuelRoutes);
+app.use('/api/v1/maintenance', maintenanceRoutes);
+app.use('/api/v1/routes', routeRoutes);
+app.use('/api/v1/gps', gpsRoutes);
+app.use('/api/v1/notifications', notificationRoutes);
+app.use('/api/v1/settings/backups', backupRoutes);
 
 app.use((req, res) => {
   res.status(404).json({
@@ -64,7 +85,7 @@ app.use((err, req, res, next) => {
   if (statusCode >= 500) console.error(err.stack);
   res.status(statusCode).json({
     success: false,
-    message: statusCode >= 500 ? 'Internal Server Error' : err.message
+    message: statusCode >= 500 && err.expose !== true ? 'Internal Server Error' : err.message
   });
 });
 
@@ -80,7 +101,9 @@ async function startServer(options = {}) {
   }
 
   await mongoose.connect(mongoUri);
+  backupService.configureMongoUri(mongoUri);
   console.log('Connected to MongoDB');
+  await Promise.all(mongoose.modelNames().map((modelName) => mongoose.model(modelName).init()));
   await ensureAdminAccount();
 
   const server = app.listen(port);

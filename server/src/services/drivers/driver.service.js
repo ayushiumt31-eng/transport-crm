@@ -10,6 +10,12 @@ const { Trip } = require('../../models/trips/trip.model');
 
 const serviceError = (message, statusCode) => Object.assign(new Error(message), { statusCode });
 const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const DOCUMENT_MAX_BYTES = 5 * 1024 * 1024;
+const DOCUMENT_SIGNATURES = {
+    'application/pdf': (data) => data.subarray(0, 5).toString('ascii') === '%PDF-',
+    'image/jpeg': (data) => data.length >= 3 && data[0] === 0xff && data[1] === 0xd8 && data[2] === 0xff,
+    'image/png': (data) => data.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
+};
 const todayUtc = () => {
     const now = new Date();
     return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
@@ -99,10 +105,11 @@ function duplicateError(error, label) {
 function mergeNested(document, changes, keys) {
     for (const key of keys) {
         if (!Object.hasOwn(changes, key)) continue;
-        if (changes[key] && typeof changes[key] === 'object' && !Array.isArray(changes[key])) {
-            document.set(key, { ...(document.get(key)?.toObject?.() || document.get(key) || {}), ...changes[key] });
+        const value = changes[key];
+        if (value && Object.getPrototypeOf(value) === Object.prototype) {
+            document.set(key, { ...(document.get(key)?.toObject?.() || document.get(key) || {}), ...value });
         } else {
-            document.set(key, changes[key]);
+            document.set(key, value);
         }
     }
 }
@@ -369,22 +376,50 @@ exports.listDocuments = (query, actor) => listRecords(DriverDocument, query, act
     sort: { createdAt: -1, _id: -1 }
 });
 
-exports.createDocument = async (data, actor) => {
+exports.createDocument = async (data, actor, file) => {
     await requireActiveDriver(data.driverId);
-    return (await DriverDocument.create({
+    if (file) {
+        if (file.size < 1 || file.size > DOCUMENT_MAX_BYTES) {
+            throw serviceError('Driver documents must be between 1 byte and 5 MB.', 413);
+        }
+        if (!DOCUMENT_SIGNATURES[file.mimetype]?.(file.buffer)) {
+            throw serviceError('Only valid PDF, JPEG or PNG driver documents are accepted.', 415);
+        }
+    }
+
+    const fileFields = file ? {
+        originalName: file.originalname.replace(/[\\/\u0000-\u001f\u007f"]/g, '_').slice(0, 255),
+        contentType: file.mimetype,
+        size: file.size,
+        content: file.buffer
+    } : {};
+    const document = await DriverDocument.create({
         ...data,
+        ...fileFields,
         createdBy: actorId(actor),
         updatedBy: actorId(actor)
-    })).toObject();
+    });
+    const result = document.toObject();
+    delete result.content;
+    return result;
 };
 
 exports.updateDocument = async (id, changes, actor) => {
     const document = await findRelated(DriverDocument, id, actor, 'Driver document');
     if (changes.driverId) await requireActiveDriver(changes.driverId);
-    mergeNested(document, changes, ['driverId', 'documentType', 'documentNumber', 'issueDate', 'expiryDate', 'fileUrl']);
+    mergeNested(document, changes, ['driverId', 'documentType', 'documentNumber', 'issueDate', 'expiryDate']);
     document.updatedBy = actorId(actor);
     await document.save();
     return document.toObject();
+};
+
+exports.getDocumentContent = async (id, actor) => {
+    if (!mongoose.isValidObjectId(id)) throw serviceError('Invalid driver document ID.', 400);
+    const filter = { _id: id, isDeleted: false };
+    if (actor.role === 'driver') filter.driverId = actor.id;
+    const document = await DriverDocument.findOne(filter).select('+content').lean();
+    if (!document || !document.content) throw serviceError('Driver document not found.', 404);
+    return document;
 };
 
 exports.deleteDocument = async (id, actor) => {

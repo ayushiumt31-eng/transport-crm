@@ -3,7 +3,7 @@ module.exports = {
   info: {
     title: 'Transport CRM API',
     version: '1.0.0',
-    description: 'Authentication, customer management, customer portal, booking, fleet, driver, and trip endpoints currently enabled in the backend.'
+    description: 'Authentication, customer management, customer portal, booking, fleet, driver, trip, route management, cargo, billing, expense, fuel, maintenance, GPS, notification, and local backup endpoints currently enabled in the backend.'
   },
   servers: [{ url: '/', description: 'Current API host' }],
   tags: [
@@ -14,7 +14,15 @@ module.exports = {
     { name: 'Booking Management' },
     { name: 'Fleet Management' },
     { name: 'Driver Management' },
-    { name: 'Trip Management' }
+    { name: 'Trip Management' },
+    { name: 'Cargo & Shipment' },
+    { name: 'Billing & Accounting' },
+    { name: 'Fuel Management' },
+    { name: 'Vehicle Maintenance' },
+    { name: 'Route Management' },
+    { name: 'GPS Tracking' },
+    { name: 'Notification Center' },
+    { name: 'System Settings' }
   ],
   components: {
     securitySchemes: {
@@ -40,10 +48,11 @@ module.exports = {
       },
       CustomerRegistration: {
         type: 'object',
-        required: ['contactPerson', 'phone', 'password'],
+        required: ['contactPerson', 'email', 'phone', 'password'],
         properties: {
           contactPerson: { type: 'string', minLength: 2, maxLength: 100 },
           companyName: { type: 'string', maxLength: 150 },
+          email: { type: 'string', format: 'email', maxLength: 254 },
           phone: { type: 'string', pattern: '^[6-9]\\d{9}$', example: '9876543210' },
           password: { type: 'string', minLength: 8, maxLength: 72, format: 'password' }
         },
@@ -321,7 +330,7 @@ module.exports = {
         responses: {
           201: { description: 'Customer account created and signed in.' },
           400: { description: 'Invalid request.' },
-          409: { description: 'Mobile number is already registered.' }
+          409: { description: 'Email address or mobile number is already registered.' }
         }
       }
     },
@@ -525,6 +534,89 @@ module.exports = {
         responses: { 200: { description: 'Private document stream.' }, 404: { description: 'Document not found for customer.' } }
       }
     },
+    '/api/v1/customers/feedback/options/shipments': {
+      get: {
+        tags: ['Customer Management'],
+        summary: 'List delivered shipments for which the customer may submit feedback',
+        security: [{ BearerAuth: [] }],
+        responses: { 200: { description: 'Only the current customer’s delivered shipments without existing feedback.' }, 403: { description: 'Customer role required.' } }
+      }
+    },
+    '/api/v1/customers/feedback': {
+      get: {
+        tags: ['Customer Management'],
+        summary: 'List feedback (customers see only their own; staff see all)',
+        security: [{ BearerAuth: [] }],
+        parameters: [
+          { name: 'page', in: 'query', schema: { type: 'integer', minimum: 1, default: 1 } },
+          { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 100, default: 20 } },
+          { name: 'status', in: 'query', schema: { type: 'string', enum: ['Open', 'InReview', 'Resolved'] } },
+          { name: 'category', in: 'query', schema: { type: 'string', enum: ['Service', 'Driver', 'Vehicle', 'Delivery', 'Other'] } },
+          { name: 'rating', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 5 } },
+          { name: 'search', in: 'query', schema: { type: 'string', maxLength: 100 } }
+        ],
+        responses: { 200: { description: 'Paginated feedback records.' } }
+      },
+      post: {
+        tags: ['Customer Management'],
+        summary: 'Submit one feedback record for an owned delivered shipment',
+        description: 'The shipment must be delivered and have POD. A unique shipment constraint prevents duplicate submissions.',
+        security: [{ BearerAuth: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['shipmentId', 'category', 'rating', 'subject', 'message'],
+                properties: {
+                  shipmentId: { type: 'string', pattern: '^[0-9a-fA-F]{24}$' },
+                  category: { type: 'string', enum: ['Service', 'Driver', 'Vehicle', 'Delivery', 'Other'] },
+                  rating: { type: 'integer', minimum: 1, maximum: 5 },
+                  subject: { type: 'string', minLength: 3, maxLength: 150 },
+                  message: { type: 'string', minLength: 5, maxLength: 2000 }
+                },
+                additionalProperties: false
+              }
+            }
+          }
+        },
+        responses: { 201: { description: 'Feedback submitted.' }, 404: { description: 'Shipment is not owned by the customer.' }, 409: { description: 'Shipment is not delivered or feedback already exists.' } }
+      }
+    },
+    '/api/v1/customers/feedback/summary': {
+      get: {
+        tags: ['Customer Management'],
+        summary: 'Summarize staff feedback queue and average customer rating',
+        security: [{ BearerAuth: [] }],
+        responses: { 200: { description: 'Feedback total, average rating and status counts.' }, 403: { description: 'Staff role required.' } }
+      }
+    },
+    '/api/v1/customers/feedback/{id}': {
+      patch: {
+        tags: ['Customer Management'],
+        summary: 'Review or resolve feedback with a customer-facing response (admin and manager)',
+        security: [{ BearerAuth: [] }],
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', pattern: '^[0-9a-fA-F]{24}$' } }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['status'],
+                properties: {
+                  status: { type: 'string', enum: ['Open', 'InReview', 'Resolved'] },
+                  staffResponse: { type: 'string', maxLength: 2000 }
+                },
+                additionalProperties: false
+              }
+            }
+          }
+        },
+        responses: { 200: { description: 'Feedback status and customer-visible response saved with history.' }, 400: { description: 'A response is required to resolve feedback.' }, 403: { description: 'Staff role required.' }, 409: { description: 'Invalid feedback status transition.' } }
+      }
+    },
     '/api/v1/customers/portal/dashboard': {
       get: {
         tags: ['Customer Portal'],
@@ -715,11 +807,78 @@ module.exports = {
         responses: { 200: { description: 'Chronological status changes for the booking.' }, 404: { description: 'Booking not found.' } }
       }
     },
+    '/api/v1/customers/booking/{bookingId}/quote': {
+      put: {
+        tags: ['Booking Management'],
+        summary: 'Issue or revise a priced booking quote (admin and manager)',
+        description: 'Quote prices are stored in INR paise. A quote may be revised only before customer response, with a new version.',
+        security: [{ BearerAuth: [] }],
+        parameters: [{ name: 'bookingId', in: 'path', required: true, schema: { type: 'string', pattern: '^[0-9a-fA-F]{24}$' } }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['validUntil', 'items'],
+                properties: {
+                  validUntil: { type: 'string', format: 'date' },
+                  terms: { type: 'string', maxLength: 2000 },
+                  items: {
+                    type: 'array',
+                    minItems: 1,
+                    maxItems: 50,
+                    items: {
+                      type: 'object',
+                      required: ['description', 'quantity', 'unitPrice'],
+                      properties: {
+                        description: { type: 'string', minLength: 2, maxLength: 200 },
+                        quantity: { type: 'number', exclusiveMinimum: 0, maximum: 100000 },
+                        unitPrice: { type: 'number', minimum: 0, maximum: 100000000 }
+                      },
+                      additionalProperties: false
+                    }
+                  }
+                },
+                additionalProperties: false
+              }
+            }
+          }
+        },
+        responses: { 200: { description: 'Versioned quote issued; booking enters quoted status.' }, 400: { description: 'Invalid quote or expiry date.' }, 409: { description: 'Booking is not quoteable or the customer has already responded.' } }
+      }
+    },
+    '/api/v1/customers/booking/{bookingId}/quote/decision': {
+      patch: {
+        tags: ['Booking Management'],
+        summary: 'Accept or decline the current unexpired booking quote (booking owner only)',
+        security: [{ BearerAuth: [] }],
+        parameters: [{ name: 'bookingId', in: 'path', required: true, schema: { type: 'string', pattern: '^[0-9a-fA-F]{24}$' } }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['decision', 'version'],
+                properties: {
+                  decision: { type: 'string', enum: ['accept', 'decline'] },
+                  version: { type: 'integer', minimum: 1 },
+                  remarks: { type: 'string', maxLength: 500 }
+                },
+                additionalProperties: false
+              }
+            }
+          }
+        },
+        responses: { 200: { description: 'Accepted quote confirms the booking; declined quote rejects it.' }, 403: { description: 'Customer role required.' }, 404: { description: 'Booking does not belong to this customer.' }, 409: { description: 'Quote is replaced, expired or already answered.' } }
+      }
+    },
     '/api/v1/customers/booking/{bookingId}/status': {
       patch: {
         tags: ['Booking Management'],
         summary: 'Advance booking status (staff) or cancel an unconfirmed own booking (customer)',
-        description: 'Staff transitions: pending → under_review → quoted → confirmed. Rejection or cancellation is terminal; expiry is available from quoted. Customers may cancel only pending, under-review, or quoted bookings.',
+        description: 'Staff transitions: pending → under_review; issuing a priced quote moves the booking to quoted. Only customer acceptance confirms the quote. Rejection or cancellation is terminal; staff may expire quotes after their validity period. Customers may cancel only pending, under-review, or awaiting-response bookings.',
         security: [{ BearerAuth: [] }],
         parameters: [{ name: 'bookingId', in: 'path', required: true, schema: { type: 'string', pattern: '^[0-9a-fA-F]{24}$' } }],
         requestBody: {
@@ -763,6 +922,19 @@ module.exports = {
         summary: 'Get live fleet status and vehicle type totals',
         security: [{ BearerAuth: [] }],
         responses: { 200: { description: 'Fleet totals and type breakdown.' } }
+      }
+    },
+    '/api/v1/fleet/vehicles/utilization': {
+      get: {
+        tags: ['Fleet Management'],
+        summary: 'Report actual vehicle trip hours within a required date range',
+        description: 'Counts only actual trip start and completion timestamps. In-progress trips are measured through now; this is not an availability-adjusted utilization percentage.',
+        security: [{ BearerAuth: [] }],
+        parameters: [
+          { name: 'startDate', in: 'query', required: true, schema: { type: 'string', format: 'date' } },
+          { name: 'endDate', in: 'query', required: true, schema: { type: 'string', format: 'date' } }
+        ],
+        responses: { 200: { description: 'Staff-only tracked trip hours and trip counts by registered vehicle.' }, 400: { description: 'Invalid, reversed, or future date range.' }, 403: { description: 'Staff role required.' } }
       }
     },
     '/api/v1/fleet/vehicles/{id}': {
@@ -948,9 +1120,37 @@ module.exports = {
       },
       post: {
         tags: ['Driver Management'],
-        summary: 'Add a driver compliance document',
+        summary: 'Create a driver compliance document with an optional PDF, JPEG or PNG attachment (maximum 5 MB)',
         security: [{ BearerAuth: [] }],
-        responses: { 201: { description: 'Driver document created.' } }
+        requestBody: {
+          required: true,
+          content: {
+            'multipart/form-data': {
+              schema: {
+                type: 'object',
+                required: ['driverId', 'documentType'],
+                properties: {
+                  driverId: { type: 'string', pattern: '^[0-9a-fA-F]{24}$' },
+                  documentType: { type: 'string', enum: ['DrivingLicence', 'IdentityProof', 'AddressProof', 'MedicalCertificate', 'Other'] },
+                  documentNumber: { type: 'string', maxLength: 100 },
+                  issueDate: { type: 'string', format: 'date' },
+                  expiryDate: { type: 'string', format: 'date' },
+                  file: { type: 'string', format: 'binary' }
+                }
+              }
+            }
+          }
+        },
+        responses: { 201: { description: 'Driver document record created; optional file content is not returned in metadata.' }, 413: { description: 'File exceeds 5 MB.' }, 415: { description: 'Unsupported or invalid file content.' } }
+      }
+    },
+    '/api/v1/drivers/documents/{id}/download': {
+      get: {
+        tags: ['Driver Management'],
+        summary: 'Download an owned driver compliance document',
+        security: [{ BearerAuth: [] }],
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', pattern: '^[0-9a-fA-F]{24}$' } }],
+        responses: { 200: { description: 'Private document file.' }, 404: { description: 'Document not found or not owned by the signed-in driver.' } }
       }
     },
     '/api/v1/drivers/documents/{id}': {
@@ -1154,6 +1354,26 @@ module.exports = {
         tags: ['Trip Management'],
         summary: 'Create a route plan for a scheduled or assigned trip',
         security: [{ BearerAuth: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['tripId'],
+                properties: {
+                  tripId: { type: 'string', pattern: '^[0-9a-fA-F]{24}$' },
+                  routeCatalogId: { type: 'string', pattern: '^[0-9a-fA-F]{24}$', description: 'Optional saved route; its distance, duration, tolls, and waypoints are snapshotted.' },
+                  routeId: { type: 'string', minLength: 2, maxLength: 100, description: 'Required only when routeCatalogId is omitted.' },
+                  waypoints: { type: 'string', maxLength: 5000 },
+                  plannedStartDate: { type: 'string', format: 'date-time' },
+                  notes: { type: 'string', maxLength: 2000 }
+                },
+                additionalProperties: false
+              }
+            }
+          }
+        },
         responses: { 201: { description: 'Trip route plan created.' }, 409: { description: 'A plan already exists or trip has started.' } }
       }
     },
@@ -1171,6 +1391,924 @@ module.exports = {
         security: [{ BearerAuth: [] }],
         parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', pattern: '^[0-9a-fA-F]{24}$' } }],
         responses: { 200: { description: 'Route plan deleted.' }, 409: { description: 'Trip has already started.' } }
+      }
+    },
+    '/api/v1/cargo/shipments/options/bookings': {
+      get: {
+        tags: ['Cargo & Shipment'],
+        summary: 'List confirmed bookings that do not yet have a shipment',
+        security: [{ BearerAuth: [] }],
+        parameters: [
+          { name: 'page', in: 'query', schema: { type: 'integer', minimum: 1, default: 1 } },
+          { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 100, default: 20 } }
+        ],
+        responses: {
+          200: { description: 'Staff-only paginated confirmed booking options.' },
+          403: { description: 'Staff role required.' }
+        }
+      }
+    },
+    '/api/v1/cargo/shipments': {
+      get: {
+        tags: ['Cargo & Shipment'],
+        summary: 'List shipments visible to the signed-in staff member, assigned driver, or customer',
+        security: [{ BearerAuth: [] }],
+        parameters: [
+          { name: 'page', in: 'query', schema: { type: 'integer', minimum: 1, default: 1 } },
+          { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 100, default: 20 } },
+          { name: 'status', in: 'query', schema: { type: 'string', enum: ['Booked', 'ReadyForPickup', 'PickedUp', 'InTransit', 'OutForDelivery', 'Delivered', 'Exception', 'Cancelled'] } },
+          { name: 'search', in: 'query', schema: { type: 'string', maxLength: 100 } }
+        ],
+        responses: {
+          200: { description: 'Paginated shipments with booking, trip and status history; customer and driver results are ownership-scoped.' }
+        }
+      },
+      post: {
+        tags: ['Cargo & Shipment'],
+        summary: 'Create a consignment from a confirmed booking',
+        security: [{ BearerAuth: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['bookingId'],
+                properties: { bookingId: { type: 'string', pattern: '^[0-9a-fA-F]{24}$' } },
+                additionalProperties: false
+              }
+            }
+          }
+        },
+        responses: {
+          201: { description: 'Shipment created with a unique consignment number.' },
+          403: { description: 'Staff role required.' },
+          409: { description: 'Booking is not confirmed or already has a shipment.' }
+        }
+      }
+    },
+    '/api/v1/cargo/shipments/{id}': {
+      parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', pattern: '^[0-9a-fA-F]{24}$' } }],
+      get: {
+        tags: ['Cargo & Shipment'],
+        summary: 'Get a shipment visible to the signed-in staff member, assigned driver, or customer',
+        security: [{ BearerAuth: [] }],
+        responses: {
+          200: { description: 'Shipment, linked trip and status history.' },
+          404: { description: 'Shipment not found or outside the caller scope.' }
+        }
+      }
+    },
+    '/api/v1/cargo/shipments/{id}/live-location': {
+      get: {
+        tags: ['Cargo & Shipment'],
+        summary: 'Get live GPS for a shipment visible to its customer',
+        description: 'Customers can see only their own shipment. Returns a location trail for an active trip when the assigned driver has shared recent phone GPS.',
+        security: [{ BearerAuth: [] }],
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', pattern: '^[0-9a-fA-F]{24}$' } }],
+        responses: {
+          200: { description: 'Active-trip location, route trail and freshness flag; location is null until the driver shares GPS.' },
+          404: { description: 'Shipment not found or outside the caller scope.' }
+        }
+      }
+    },
+    '/api/v1/cargo/shipments/{id}/status': {
+      patch: {
+        tags: ['Cargo & Shipment'],
+        summary: 'Advance a shipment milestone or record a delivery exception',
+        security: [{ BearerAuth: [] }],
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', pattern: '^[0-9a-fA-F]{24}$' } }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['shipmentStatus'],
+                properties: {
+                  shipmentStatus: { type: 'string', enum: ['Booked', 'ReadyForPickup', 'PickedUp', 'InTransit', 'OutForDelivery', 'Delivered', 'Exception', 'Cancelled'] },
+                  remarks: { type: 'string', maxLength: 1000 },
+                  location: {
+                    type: 'object',
+                    properties: {
+                      latitude: { type: 'number', minimum: -90, maximum: 90 },
+                      longitude: { type: 'number', minimum: -180, maximum: 180 },
+                      label: { type: 'string', maxLength: 200 }
+                    },
+                    required: ['latitude', 'longitude'],
+                    additionalProperties: false
+                  }
+                },
+                additionalProperties: false
+              }
+            }
+          }
+        },
+        responses: {
+          200: { description: 'Status transition appended to the audit history.' },
+          403: { description: 'Only staff or the assigned driver may update shipment status.' },
+          409: { description: 'Transition order, linked trip, or POD requirements are not satisfied.' }
+        }
+      }
+    },
+    '/api/v1/cargo/shipments/{id}/pod': {
+      post: {
+        tags: ['Cargo & Shipment'],
+        summary: 'Record delivery confirmation with an optional private proof-of-delivery attachment',
+        security: [{ BearerAuth: [] }],
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', pattern: '^[0-9a-fA-F]{24}$' } }],
+        requestBody: {
+          required: true,
+          content: {
+            'multipart/form-data': {
+              schema: {
+                type: 'object',
+                required: ['receivedBy', 'receivedAt'],
+                properties: {
+                  receivedBy: { type: 'string', minLength: 2, maxLength: 100 },
+                  receivedAt: { type: 'string', format: 'date-time' },
+                  remarks: { type: 'string', maxLength: 1000 },
+                  file: { type: 'string', format: 'binary' }
+                },
+                additionalProperties: false
+              }
+            }
+          }
+        },
+        responses: {
+          201: { description: 'Delivery record saved; optional PDF, JPEG or PNG POD attachment is stored privately (maximum 5 MB).' },
+          415: { description: 'File signature is not supported.' }
+        }
+      }
+    },
+    '/api/v1/cargo/shipments/{id}/pod/download': {
+      get: {
+        tags: ['Cargo & Shipment'],
+        summary: 'Download the shipment POD after authorization and ownership checks',
+        security: [{ BearerAuth: [] }],
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', pattern: '^[0-9a-fA-F]{24}$' } }],
+        responses: {
+          200: { description: 'Private document stream with no-store caching.' },
+          404: { description: 'POD attachment not found or shipment outside the caller scope.' }
+        }
+      }
+    },
+    '/api/v1/billing/options/shipments': {
+      get: {
+        tags: ['Billing & Accounting'],
+        summary: 'List delivered shipments with POD that have not yet been invoiced',
+        security: [{ BearerAuth: [] }],
+        parameters: [
+          { name: 'page', in: 'query', schema: { type: 'integer', minimum: 1, default: 1 } },
+          { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 100, default: 20 } }
+        ],
+        responses: { 200: { description: 'Staff-only invoiceable shipment directory.' }, 403: { description: 'Staff role required.' } }
+      }
+    },
+    '/api/v1/billing/gst-profile': {
+      get: {
+        tags: ['Billing & Accounting'],
+        summary: 'Read the configured GST business profile',
+        description: 'Staff-only setup data. This endpoint does not validate GSTIN with GSTN or generate statutory invoices.',
+        security: [{ BearerAuth: [] }],
+        responses: { 200: { description: 'GST business details, tax categories and setup completeness.' }, 403: { description: 'Staff role required.' } }
+      },
+      put: {
+        tags: ['Billing & Accounting'],
+        summary: 'Save GST business details and CA-reviewed tax categories',
+        description: 'Super Admin only. This saves configuration inputs; statutory GST calculations, place-of-supply rules and e-invoicing are not implemented.',
+        security: [{ BearerAuth: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: {
+                  legalName: { type: 'string', maxLength: 150 },
+                  gstin: { type: 'string', pattern: '^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$' },
+                  registeredState: { type: 'string' },
+                  billingAddress: { type: 'object' },
+                  taxCategories: {
+                    type: 'array',
+                    items: {
+                      type: 'object',
+                      required: ['name', 'serviceCode', 'ratePercent'],
+                      properties: {
+                        name: { type: 'string', maxLength: 120 },
+                        serviceCode: { type: 'string', minLength: 4, maxLength: 8 },
+                        ratePercent: { type: 'number', minimum: 0, maximum: 100 }
+                      },
+                      additionalProperties: false
+                    }
+                  },
+                  taxRatesReviewed: { type: 'boolean' }
+                },
+                additionalProperties: false
+              }
+            }
+          }
+        },
+        responses: { 200: { description: 'GST profile saved.' }, 400: { description: 'GST profile input is invalid.' }, 403: { description: 'Super Admin role required.' } }
+      }
+    },
+    '/api/v1/billing/invoices': {
+      get: {
+        tags: ['Billing & Accounting'],
+        summary: 'List invoices; customers see only invoices for their own account',
+        security: [{ BearerAuth: [] }],
+        parameters: [
+          { name: 'page', in: 'query', schema: { type: 'integer', minimum: 1, default: 1 } },
+          { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 100, default: 20 } },
+          { name: 'status', in: 'query', schema: { type: 'string', enum: ['Issued', 'PartiallyPaid', 'Paid', 'Overdue', 'Cancelled'] } },
+          { name: 'search', in: 'query', schema: { type: 'string', maxLength: 100 } }
+        ],
+        responses: { 200: { description: 'Paginated invoice snapshots with amounts stored in paise and scoped payment receipts.' } }
+      },
+      post: {
+        tags: ['Billing & Accounting'],
+        summary: 'Issue an internal invoice for a delivered shipment with POD',
+        description: 'This internal billing record is not a statutory GST invoice or e-invoice. Payment amounts are recorded by staff only after funds are received.',
+        security: [{ BearerAuth: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['shipmentId', 'invoiceDate', 'dueDate', 'items'],
+                properties: {
+                  shipmentId: { type: 'string', pattern: '^[0-9a-fA-F]{24}$' },
+                  invoiceDate: { type: 'string', format: 'date' },
+                  dueDate: { type: 'string', format: 'date' },
+                  taxRatePercent: { type: 'number', minimum: 0, maximum: 100, default: 0 },
+                  items: {
+                    type: 'array',
+                    minItems: 1,
+                    maxItems: 50,
+                    items: {
+                      type: 'object',
+                      required: ['description', 'quantity', 'unitPrice'],
+                      properties: {
+                        description: { type: 'string', minLength: 2, maxLength: 200 },
+                        quantity: { type: 'number', exclusiveMinimum: 0, maximum: 100000 },
+                        unitPrice: { type: 'number', minimum: 0, maximum: 100000000 }
+                      },
+                      additionalProperties: false
+                    }
+                  }
+                },
+                additionalProperties: false
+              }
+            }
+          }
+        },
+        responses: {
+          201: { description: 'Invoice issued with snapshotted customer/booking details and unique annual invoice number.' },
+          403: { description: 'Staff role required.' },
+          409: { description: 'Shipment is not delivered with POD or already has an invoice.' }
+        }
+      }
+    },
+    '/api/v1/billing/invoices/{id}': {
+      parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', pattern: '^[0-9a-fA-F]{24}$' } }],
+      get: {
+        tags: ['Billing & Accounting'],
+        summary: 'Get an invoice visible to staff or its customer',
+        security: [{ BearerAuth: [] }],
+        responses: { 200: { description: 'Invoice and authorized payment receipt history.' }, 404: { description: 'Invoice is not available in the caller scope.' } }
+      }
+    },
+    '/api/v1/billing/invoices/{id}/payments': {
+      post: {
+        tags: ['Billing & Accounting'],
+        summary: 'Record funds already received against an invoice',
+        description: 'Staff-only manual receipt recording; this endpoint does not initiate or verify an external payment.',
+        security: [{ BearerAuth: [] }],
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', pattern: '^[0-9a-fA-F]{24}$' } }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['idempotencyKey', 'amount', 'method', 'paidAt'],
+                properties: {
+                  idempotencyKey: { type: 'string', minLength: 16, maxLength: 128 },
+                  amount: { type: 'number', exclusiveMinimum: 0, maximum: 1000000000 },
+                  method: { type: 'string', enum: ['BankTransfer', 'UPI', 'Card', 'Cash', 'Cheque', 'Other'] },
+                  transactionReference: { type: 'string', maxLength: 100 },
+                  notes: { type: 'string', maxLength: 500 },
+                  paidAt: { type: 'string', format: 'date-time' }
+                },
+                additionalProperties: false
+              }
+            }
+          }
+        },
+        responses: {
+          201: { description: 'Payment receipt recorded; duplicate idempotency retries return the existing invoice.' },
+          403: { description: 'Staff role required.' },
+          409: { description: 'Invoice is cancelled, paid, or the payment exceeds its remaining balance.' }
+        }
+      }
+    },
+    '/api/v1/billing/invoices/{id}/cancel': {
+      patch: {
+        tags: ['Billing & Accounting'],
+        summary: 'Cancel an unpaid and unadjusted invoice',
+        security: [{ BearerAuth: [] }],
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', pattern: '^[0-9a-fA-F]{24}$' } }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['remarks'],
+                properties: { remarks: { type: 'string', minLength: 2, maxLength: 500 } },
+                additionalProperties: false
+              }
+            }
+          }
+        },
+        responses: { 200: { description: 'Unpaid invoice cancelled and audited.' }, 409: { description: 'Invoices with recorded payments cannot be cancelled.' } }
+      }
+    },
+    '/api/v1/billing/payments': {
+      get: {
+        tags: ['Billing & Accounting'],
+        summary: 'List payment receipts; customers see only their own receipts',
+        security: [{ BearerAuth: [] }],
+        parameters: [
+          { name: 'page', in: 'query', schema: { type: 'integer', minimum: 1, default: 1 } },
+          { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 100, default: 20 } },
+          { name: 'search', in: 'query', schema: { type: 'string', maxLength: 100 } },
+          { name: 'startDate', in: 'query', schema: { type: 'string', format: 'date' } },
+          { name: 'endDate', in: 'query', schema: { type: 'string', format: 'date' } }
+        ],
+        responses: { 200: { description: 'Paginated receipt records.' } }
+      }
+    },
+    '/api/v1/billing/reports/summary': {
+      get: {
+        tags: ['Billing & Accounting'],
+        summary: 'Summarize issued invoices, receipts, outstanding and overdue balances',
+        security: [{ BearerAuth: [] }],
+        parameters: [
+          { name: 'startDate', in: 'query', schema: { type: 'string', format: 'date' } },
+          { name: 'endDate', in: 'query', schema: { type: 'string', format: 'date' } }
+        ],
+        responses: { 200: { description: 'Staff-only totals in INR paise.' }, 403: { description: 'Staff role required.' } }
+      }
+    },
+    '/api/v1/billing/expenses': {
+      get: {
+        tags: ['Billing & Accounting'],
+        summary: 'List the staff expense ledger',
+        security: [{ BearerAuth: [] }],
+        parameters: [
+          { name: 'page', in: 'query', schema: { type: 'integer', minimum: 1, default: 1 } },
+          { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 100, default: 20 } },
+          { name: 'category', in: 'query', schema: { type: 'string', enum: ['Fuel', 'Toll', 'Maintenance', 'Driver', 'Operations', 'Other'] } },
+          { name: 'vehicleId', in: 'query', schema: { type: 'string', pattern: '^[0-9a-fA-F]{24}$' } },
+          { name: 'tripId', in: 'query', schema: { type: 'string', pattern: '^[0-9a-fA-F]{24}$' } },
+          { name: 'search', in: 'query', schema: { type: 'string', maxLength: 100 } },
+          { name: 'startDate', in: 'query', schema: { type: 'string', format: 'date' } },
+          { name: 'endDate', in: 'query', schema: { type: 'string', format: 'date' } }
+        ],
+        responses: { 200: { description: 'Paginated staff-only expense records.' }, 403: { description: 'Staff role required.' } }
+      },
+      post: {
+        tags: ['Billing & Accounting'],
+        summary: 'Record an operating expense',
+        security: [{ BearerAuth: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['idempotencyKey', 'category', 'description', 'amount', 'incurredAt'],
+                properties: {
+                  idempotencyKey: { type: 'string', minLength: 16, maxLength: 128 },
+                  category: { type: 'string', enum: ['Fuel', 'Toll', 'Maintenance', 'Driver', 'Operations', 'Other'] },
+                  description: { type: 'string', minLength: 2, maxLength: 500 },
+                  amount: { type: 'number', exclusiveMinimum: 0, maximum: 90071992547409.9, multipleOf: 0.01 },
+                  incurredAt: { type: 'string', format: 'date-time' },
+                  vehicleId: { type: 'string', pattern: '^[0-9a-fA-F]{24}$', nullable: true },
+                  tripId: { type: 'string', pattern: '^[0-9a-fA-F]{24}$', nullable: true },
+                  vendor: { type: 'string', maxLength: 150 },
+                  reference: { type: 'string', maxLength: 100 },
+                  notes: { type: 'string', maxLength: 1000 }
+                },
+                additionalProperties: false
+              }
+            }
+          }
+        },
+        responses: { 201: { description: 'Expense recorded.' }, 200: { description: 'Matching idempotent retry.' }, 409: { description: 'Idempotency key reused with different details.' } }
+      }
+    },
+    '/api/v1/billing/expenses/reports/summary': {
+      get: {
+        tags: ['Billing & Accounting'],
+        summary: 'Summarize manually recorded expenses by category and vehicle',
+        security: [{ BearerAuth: [] }],
+        parameters: [
+          { name: 'category', in: 'query', schema: { type: 'string', enum: ['Fuel', 'Toll', 'Maintenance', 'Driver', 'Operations', 'Other'] } },
+          { name: 'vehicleId', in: 'query', schema: { type: 'string', pattern: '^[0-9a-fA-F]{24}$' } },
+          { name: 'startDate', in: 'query', schema: { type: 'string', format: 'date' } },
+          { name: 'endDate', in: 'query', schema: { type: 'string', format: 'date' } }
+        ],
+        responses: { 200: { description: 'Staff-only totals in INR paise.' }, 403: { description: 'Staff role required.' } }
+      }
+    },
+    '/api/v1/fuel/options/vehicles': {
+      get: {
+        tags: ['Fuel Management'],
+        summary: 'List active fleet vehicles for fuel-entry forms',
+        security: [{ BearerAuth: [] }],
+        parameters: [
+          { name: 'page', in: 'query', schema: { type: 'integer', minimum: 1, default: 1 } },
+          { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 100, default: 100 } },
+          { name: 'search', in: 'query', schema: { type: 'string', maxLength: 100 } }
+        ],
+        responses: { 200: { description: 'Staff-only paginated vehicle options.' }, 403: { description: 'Staff role required.' } }
+      }
+    },
+    '/api/v1/fuel/options/trips': {
+      get: {
+        tags: ['Fuel Management'],
+        summary: 'List trips for the selected vehicle',
+        security: [{ BearerAuth: [] }],
+        parameters: [{ name: 'vehicleId', in: 'query', required: true, schema: { type: 'string', pattern: '^[0-9a-fA-F]{24}$' } }],
+        responses: { 200: { description: 'Staff-only trips for the selected vehicle.' }, 403: { description: 'Staff role required.' } }
+      }
+    },
+    '/api/v1/fuel/entries': {
+      get: {
+        tags: ['Fuel Management'],
+        summary: 'List recorded fuel entries',
+        security: [{ BearerAuth: [] }],
+        parameters: [
+          { name: 'page', in: 'query', schema: { type: 'integer', minimum: 1, default: 1 } },
+          { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 100, default: 20 } },
+          { name: 'vehicleId', in: 'query', schema: { type: 'string', pattern: '^[0-9a-fA-F]{24}$' } },
+          { name: 'search', in: 'query', schema: { type: 'string', maxLength: 100 } },
+          { name: 'startDate', in: 'query', schema: { type: 'string', format: 'date' } },
+          { name: 'endDate', in: 'query', schema: { type: 'string', format: 'date' } }
+        ],
+        responses: { 200: { description: 'Paginated staff-only fuel ledger.' }, 403: { description: 'Staff role required.' } }
+      },
+      post: {
+        tags: ['Fuel Management'],
+        summary: 'Record a fuel purchase with an idempotency key and increasing odometer',
+        security: [{ BearerAuth: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['idempotencyKey', 'vehicleId', 'filledAt', 'quantity', 'unit', 'pricePerUnit', 'odometerKm'],
+                properties: {
+                  idempotencyKey: { type: 'string', minLength: 16, maxLength: 128 },
+                  vehicleId: { type: 'string', pattern: '^[0-9a-fA-F]{24}$' },
+                  tripId: { type: 'string', pattern: '^[0-9a-fA-F]{24}$' },
+                  filledAt: { type: 'string', format: 'date-time' },
+                  quantity: { type: 'number', exclusiveMinimum: 0, maximum: 1000000 },
+                  unit: { type: 'string', enum: ['Litre', 'Kg', 'KWh'] },
+                  pricePerUnit: { type: 'number', exclusiveMinimum: 0, maximum: 1000000 },
+                  odometerKm: { type: 'integer', minimum: 0 },
+                  isFullTank: { type: 'boolean', default: false },
+                  vendor: { type: 'string', maxLength: 150 },
+                  receiptNumber: { type: 'string', maxLength: 100 },
+                  notes: { type: 'string', maxLength: 500 }
+                },
+                additionalProperties: false
+              }
+            }
+          }
+        },
+        responses: {
+          201: { description: 'Fuel entry recorded with calculated INR cost.' },
+          400: { description: 'Invalid input or fuel unit does not match vehicle type.' },
+          409: { description: 'Idempotency conflict or odometer/fill time did not advance.' }
+        }
+      }
+    },
+    '/api/v1/fuel/reports/summary': {
+      get: {
+        tags: ['Fuel Management'],
+        summary: 'Summarize fuel costs, quantities, and full-tank mileage',
+        security: [{ BearerAuth: [] }],
+        parameters: [
+          { name: 'vehicleId', in: 'query', schema: { type: 'string', pattern: '^[0-9a-fA-F]{24}$' } },
+          { name: 'startDate', in: 'query', schema: { type: 'string', format: 'date' } },
+          { name: 'endDate', in: 'query', schema: { type: 'string', format: 'date' } }
+        ],
+        responses: { 200: { description: 'Staff-only fuel totals and calculated mileage intervals.' }, 403: { description: 'Staff role required.' } }
+      }
+    },
+    '/api/v1/maintenance/options/vehicles': {
+      get: {
+        tags: ['Vehicle Maintenance'],
+        summary: 'List active fleet vehicles for maintenance and compliance workflows',
+        security: [{ BearerAuth: [] }],
+        parameters: [
+          { name: 'page', in: 'query', schema: { type: 'integer', minimum: 1, default: 1 } },
+          { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 100, default: 100 } },
+          { name: 'search', in: 'query', schema: { type: 'string', maxLength: 100 } }
+        ],
+        responses: { 200: { description: 'Staff-only paginated vehicle options.' }, 403: { description: 'Staff role required.' } }
+      }
+    },
+    '/api/v1/maintenance/records': {
+      get: {
+        tags: ['Vehicle Maintenance'],
+        summary: 'List scheduled service and repair records',
+        security: [{ BearerAuth: [] }],
+        parameters: [
+          { name: 'page', in: 'query', schema: { type: 'integer', minimum: 1, default: 1 } },
+          { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 100, default: 20 } },
+          { name: 'vehicleId', in: 'query', schema: { type: 'string', pattern: '^[0-9a-fA-F]{24}$' } },
+          { name: 'recordType', in: 'query', schema: { type: 'string', enum: ['Service', 'Repair'] } },
+          { name: 'status', in: 'query', schema: { type: 'string', enum: ['Scheduled', 'InProgress', 'Completed', 'Cancelled'] } },
+          { name: 'search', in: 'query', schema: { type: 'string', maxLength: 100 } }
+        ],
+        responses: { 200: { description: 'Paginated service and repair history.' }, 403: { description: 'Staff role required.' } }
+      },
+      post: {
+        tags: ['Vehicle Maintenance'],
+        summary: 'Schedule vehicle service or create a repair work order',
+        security: [{ BearerAuth: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['vehicleId', 'recordType', 'title', 'scheduledAt'],
+                properties: {
+                  vehicleId: { type: 'string', pattern: '^[0-9a-fA-F]{24}$' },
+                  recordType: { type: 'string', enum: ['Service', 'Repair'] },
+                  title: { type: 'string', minLength: 2, maxLength: 150 },
+                  description: { type: 'string', maxLength: 2000 },
+                  scheduledAt: { type: 'string', format: 'date-time' },
+                  dueOdometerKm: { type: 'integer', minimum: 0 },
+                  vendor: { type: 'string', maxLength: 150 },
+                  estimatedCost: { type: 'number', minimum: 0, maximum: 100000000 }
+                },
+                additionalProperties: false
+              }
+            }
+          }
+        },
+        responses: { 201: { description: 'Scheduled maintenance record with an auditable number.' }, 404: { description: 'Vehicle not found.' } }
+      }
+    },
+    '/api/v1/maintenance/records/{id}/status': {
+      patch: {
+        tags: ['Vehicle Maintenance'],
+        summary: 'Start, complete, or cancel a maintenance record',
+        description: 'Starting maintenance atomically takes an available vehicle out of service. Completion restores availability only after actual cost and completion odometer are recorded. Vehicles with active trips or allocations cannot enter maintenance.',
+        security: [{ BearerAuth: [] }],
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', pattern: '^[0-9a-fA-F]{24}$' } }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['status'],
+                properties: {
+                  status: { type: 'string', enum: ['InProgress', 'Completed', 'Cancelled'] },
+                  remarks: { type: 'string', maxLength: 500 },
+                  actualCost: { type: 'number', minimum: 0, maximum: 100000000 },
+                  completionOdometerKm: { type: 'integer', minimum: 0 },
+                  completionRemarks: { type: 'string', maxLength: 1000 }
+                },
+                additionalProperties: false
+              }
+            }
+          }
+        },
+        responses: { 200: { description: 'Maintenance status updated and audited.' }, 409: { description: 'Invalid status transition or vehicle is operationally unavailable.' } }
+      }
+    },
+    '/api/v1/maintenance/vehicles/{id}/documents/{documentType}': {
+      patch: {
+        tags: ['Vehicle Maintenance'],
+        summary: 'Update insurance or fitness-certificate details on a fleet vehicle',
+        security: [{ BearerAuth: [] }],
+        parameters: [
+          { name: 'id', in: 'path', required: true, schema: { type: 'string', pattern: '^[0-9a-fA-F]{24}$' } },
+          { name: 'documentType', in: 'path', required: true, schema: { type: 'string', enum: ['insurance', 'fitnessCertificate'] } }
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['expiryDate'],
+                properties: {
+                  documentNumber: { type: 'string', maxLength: 100 },
+                  fileUrl: { type: 'string', format: 'uri', maxLength: 1000 },
+                  issueDate: { type: 'string', format: 'date' },
+                  expiryDate: { type: 'string', format: 'date' }
+                },
+                additionalProperties: false
+              }
+            }
+          }
+        },
+        responses: { 200: { description: 'Vehicle compliance document updated.' }, 400: { description: 'Invalid dates or document data.' } }
+      }
+    },
+    '/api/v1/maintenance/reminders': {
+      get: {
+        tags: ['Vehicle Maintenance'],
+        summary: 'List due service, repair, insurance, and fitness reminders',
+        description: 'Odometer-based reminders compare scheduled thresholds to the latest odometer captured in the fuel ledger.',
+        security: [{ BearerAuth: [] }],
+        parameters: [
+          { name: 'days', in: 'query', schema: { type: 'integer', minimum: 0, maximum: 365, default: 30 } },
+          { name: 'page', in: 'query', schema: { type: 'integer', minimum: 1, default: 1 } },
+          { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 100, default: 50 } }
+        ],
+        responses: { 200: { description: 'Paginated due and overdue maintenance/compliance reminders.' }, 403: { description: 'Staff role required.' } }
+      }
+    },
+    '/api/v1/maintenance/reports/summary': {
+      get: {
+        tags: ['Vehicle Maintenance'],
+        summary: 'Summarize service and repair statuses and completed costs',
+        security: [{ BearerAuth: [] }],
+        responses: { 200: { description: 'Staff-only maintenance counts and completed cost totals.' }, 403: { description: 'Staff role required.' } }
+      }
+    },
+    '/api/v1/gps/map-config': {
+      get: {
+        tags: ['GPS Tracking'],
+        summary: 'Get the configured Google Maps browser key for an authenticated map',
+        description: 'Returns a browser-visible Maps JavaScript API key to staff and drivers. Restrict it by website referrer and enabled APIs in Google Cloud.',
+        security: [{ BearerAuth: [] }],
+        responses: { 200: { description: 'Google Maps provider configuration.' }, 503: { description: 'Google Maps key is not configured.' } }
+      }
+    },
+    '/api/v1/gps/active': {
+      get: {
+        tags: ['GPS Tracking'],
+        summary: 'List active trips and their latest received location',
+        security: [{ BearerAuth: [] }],
+        parameters: [
+          { name: 'page', in: 'query', schema: { type: 'integer', minimum: 1, default: 1 } },
+          { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 100, default: 20 } }
+        ],
+        responses: { 200: { description: 'Staff sees active trips; drivers see only their assigned active trips.' } }
+      }
+    },
+    '/api/v1/gps/trips/{tripId}/locations': {
+      get: {
+        tags: ['GPS Tracking'],
+        summary: 'Read paginated location history for a trip',
+        security: [{ BearerAuth: [] }],
+        parameters: [
+          { name: 'tripId', in: 'path', required: true, schema: { type: 'string', pattern: '^[0-9a-fA-F]{24}$' } },
+          { name: 'page', in: 'query', schema: { type: 'integer', minimum: 1, default: 1 } },
+          { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 500, default: 200 } },
+          { name: 'startDate', in: 'query', schema: { type: 'string', format: 'date-time' } },
+          { name: 'endDate', in: 'query', schema: { type: 'string', format: 'date-time' } }
+        ],
+        responses: { 200: { description: 'Location history; drivers can read only their own trips.' }, 404: { description: 'Trip not found or not assigned to this driver.' } }
+      },
+      post: {
+        tags: ['GPS Tracking'],
+        summary: 'Record an explicitly shared driver-phone location',
+        description: 'Driver-only; trip must be InProgress or Delayed. Requires a current timestamp, accuracy no worse than 500 metres, and at least five seconds between updates.',
+        security: [{ BearerAuth: [] }],
+        parameters: [{ name: 'tripId', in: 'path', required: true, schema: { type: 'string', pattern: '^[0-9a-fA-F]{24}$' } }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['latitude', 'longitude', 'accuracyMeters', 'recordedAt'],
+                properties: {
+                  latitude: { type: 'number', minimum: -90, maximum: 90 },
+                  longitude: { type: 'number', minimum: -180, maximum: 180 },
+                  accuracyMeters: { type: 'number', minimum: 0, maximum: 1000 },
+                  speedMetersPerSecond: { type: 'number', minimum: 0, maximum: 83.3333, nullable: true },
+                  headingDegrees: { type: 'number', minimum: 0, maximum: 360, nullable: true },
+                  recordedAt: { type: 'string', format: 'date-time' }
+                },
+                additionalProperties: false
+              }
+            }
+          }
+        },
+        responses: { 201: { description: 'Location recorded; speed and geofence alerts are evaluated.' }, 403: { description: 'Only the assigned driver can share location.' }, 409: { description: 'Trip is not active or location is stale.' } }
+      }
+    },
+    '/api/v1/gps/geofences': {
+      get: {
+        tags: ['GPS Tracking'],
+        summary: 'List active geofences',
+        security: [{ BearerAuth: [] }],
+        responses: { 200: { description: 'Active geofences for staff and drivers.' } }
+      },
+      post: {
+        tags: ['GPS Tracking'],
+        summary: 'Create a circular geofence',
+        security: [{ BearerAuth: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['name', 'latitude', 'longitude', 'radiusMeters'],
+                properties: {
+                  name: { type: 'string', minLength: 2, maxLength: 120 },
+                  latitude: { type: 'number', minimum: -90, maximum: 90 },
+                  longitude: { type: 'number', minimum: -180, maximum: 180 },
+                  radiusMeters: { type: 'integer', minimum: 50, maximum: 100000 }
+                },
+                additionalProperties: false
+              }
+            }
+          }
+        },
+        responses: { 201: { description: 'Geofence created; entry and exit are evaluated on driver location updates.' }, 403: { description: 'Staff role required.' } }
+      }
+    },
+    '/api/v1/gps/geofences/{id}/archive': {
+      patch: {
+        tags: ['GPS Tracking'],
+        summary: 'Archive an active geofence',
+        security: [{ BearerAuth: [] }],
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', pattern: '^[0-9a-fA-F]{24}$' } }],
+        responses: { 200: { description: 'Geofence archived.' }, 404: { description: 'Active geofence not found.' } }
+      }
+    },
+    '/api/v1/gps/alerts': {
+      get: {
+        tags: ['GPS Tracking'],
+        summary: 'List speed threshold and geofence transition alerts',
+        security: [{ BearerAuth: [] }],
+        parameters: [
+          { name: 'page', in: 'query', schema: { type: 'integer', minimum: 1, default: 1 } },
+          { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 100, default: 20 } }
+        ],
+        responses: { 200: { description: 'Staff sees all alerts; drivers see only their own trip alerts.' } }
+      }
+    },
+    '/api/v1/notifications': {
+      get: {
+        tags: ['Notification Center'],
+        summary: 'List personal in-app trip and GPS notifications',
+        security: [{ BearerAuth: [] }],
+        parameters: [
+          { name: 'page', in: 'query', schema: { type: 'integer', minimum: 1, default: 1 } },
+          { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 100, default: 20 } },
+          { name: 'category', in: 'query', schema: { type: 'string', enum: ['trip', 'gps'] } },
+          { name: 'unreadOnly', in: 'query', schema: { type: 'boolean', default: false } }
+        ],
+        responses: { 200: { description: 'Paged personal notifications for the authenticated account; customers and drivers see only their own trip events.' } }
+      }
+    },
+    '/api/v1/notifications/read-all': {
+      patch: {
+        tags: ['Notification Center'],
+        summary: 'Mark all personal notifications as read',
+        security: [{ BearerAuth: [] }],
+        responses: { 200: { description: 'Returns the number of updated notifications.' } }
+      }
+    },
+    '/api/v1/notifications/{id}/read': {
+      patch: {
+        tags: ['Notification Center'],
+        summary: 'Mark one personal notification as read',
+        security: [{ BearerAuth: [] }],
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', pattern: '^[0-9a-fA-F]{24}$' } }],
+        responses: { 200: { description: 'Notification marked as read.' }, 404: { description: 'Notification not found for this account.' } }
+      }
+    },
+    '/api/v1/settings/backups/status': {
+      get: {
+        tags: ['System Settings'],
+        summary: 'Check local MongoDB backup readiness',
+        security: [{ BearerAuth: [] }],
+        responses: {
+          200: { description: 'Connected database name and mongodump availability; restore remains disabled.' },
+          403: { description: 'Super Admin role required.' }
+        }
+      }
+    },
+    '/api/v1/settings/backups/local': {
+      post: {
+        tags: ['System Settings'],
+        summary: 'Create and download a compressed backup of the connected MongoDB database',
+        description: 'Super Admin only. Requires MongoDB Database Tools on the API server. The server temporarily stages an archive for download and does not retain it. Restore is not provided.',
+        security: [{ BearerAuth: [] }],
+        responses: {
+          200: { description: 'Compressed MongoDB archive download.', content: { 'application/gzip': { schema: { type: 'string', format: 'binary' } } } },
+          403: { description: 'Super Admin role required.' },
+          503: { description: 'Database is unavailable, mongodump is missing, or backup creation failed.' }
+        }
+      }
+    },
+    '/api/v1/routes': {
+      get: {
+        tags: ['Route Management'],
+        summary: 'List active saved routes',
+        security: [{ BearerAuth: [] }],
+        parameters: [
+          { name: 'page', in: 'query', schema: { type: 'integer', minimum: 1, default: 1 } },
+          { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 100, default: 20 } },
+          { name: 'search', in: 'query', schema: { type: 'string', maxLength: 100 } },
+          { name: 'origin', in: 'query', schema: { type: 'string', maxLength: 120 } },
+          { name: 'destination', in: 'query', schema: { type: 'string', maxLength: 120 } }
+        ],
+        responses: { 200: { description: 'Paged route catalogue; staff and drivers may read.' }, 403: { description: 'Authenticated staff or driver role required.' } }
+      },
+      post: {
+        tags: ['Route Management'],
+        summary: 'Create a saved route with manually recorded distance and toll data',
+        security: [{ BearerAuth: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['name', 'origin', 'destination', 'distanceKm', 'estimatedDurationMinutes'],
+                properties: {
+                  name: { type: 'string', minLength: 2, maxLength: 120 },
+                  origin: { type: 'string', minLength: 2, maxLength: 120 },
+                  destination: { type: 'string', minLength: 2, maxLength: 120 },
+                  distanceKm: { type: 'number', exclusiveMinimum: 0 },
+                  estimatedDurationMinutes: { type: 'integer', minimum: 1 },
+                  waypoints: { type: 'array', items: { type: 'string', maxLength: 120 } },
+                  tolls: { type: 'array', items: { type: 'object' } },
+                  notes: { type: 'string', maxLength: 2000 }
+                },
+                additionalProperties: false
+              }
+            }
+          }
+        },
+        responses: { 201: { description: 'Route created with a generated route number.' }, 403: { description: 'Staff role required.' } }
+      }
+    },
+    '/api/v1/routes/{id}': {
+      patch: {
+        tags: ['Route Management'],
+        summary: 'Update route, distance, waypoint, or toll schedule data',
+        security: [{ BearerAuth: [] }],
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', pattern: '^[0-9a-fA-F]{24}$' } }],
+        requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', additionalProperties: false } } } },
+        responses: { 200: { description: 'Updated route.' }, 404: { description: 'Route not found.' }, 409: { description: 'Selected route is unavailable for new trip plans.' } }
+      }
+    },
+    '/api/v1/routes/{id}/archive': {
+      patch: {
+        tags: ['Route Management'],
+        summary: 'Archive an active route without modifying existing trip snapshots',
+        security: [{ BearerAuth: [] }],
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', pattern: '^[0-9a-fA-F]{24}$' } }],
+        requestBody: {
+          required: true,
+          content: { 'application/json': { schema: { type: 'object', required: ['remarks'], properties: { remarks: { type: 'string', minLength: 2, maxLength: 500 } }, additionalProperties: false } } }
+        },
+        responses: { 200: { description: 'Route archived.' }, 404: { description: 'Active route not found.' } }
+      }
+    },
+    '/api/v1/routes/suggestions': {
+      get: {
+        tags: ['Route Management'],
+        summary: 'Rank saved exact-match routes using recorded data only',
+        description: 'This endpoint does not calculate map directions, traffic, or live GPS routes.',
+        security: [{ BearerAuth: [] }],
+        parameters: [
+          { name: 'origin', in: 'query', required: true, schema: { type: 'string', minLength: 2 } },
+          { name: 'destination', in: 'query', required: true, schema: { type: 'string', minLength: 2 } },
+          { name: 'vehicleType', in: 'query', required: true, schema: { type: 'string' } },
+          { name: 'avoidTolls', in: 'query', schema: { type: 'boolean', default: false } },
+          { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 20, default: 5 } }
+        ],
+        responses: { 200: { description: 'Route candidates ranked by recorded distance, duration, and toll amount.' }, 403: { description: 'Staff role required.' } }
+      }
+    },
+    '/api/v1/routes/reports/summary': {
+      get: {
+        tags: ['Route Management'],
+        summary: 'Summarize saved routes and linked trip-plan estimates',
+        security: [{ BearerAuth: [] }],
+        responses: { 200: { description: 'Staff-only counts, recorded distance, and estimated toll totals.' }, 403: { description: 'Staff role required.' } }
       }
     }
   }

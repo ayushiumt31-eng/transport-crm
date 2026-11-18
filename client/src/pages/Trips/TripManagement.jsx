@@ -56,6 +56,10 @@ function dateInput(value) {
   return value ? String(value).slice(0, 10) : '';
 }
 
+function rupees(paise) {
+  return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' }).format(Number(paise || 0) / 100);
+}
+
 function statusActions(trip, role) {
   const actions = [];
   if (trip.tripStatus === 'Assigned') actions.push({ status: 'InProgress', label: 'Start trip' });
@@ -98,7 +102,10 @@ function TripTable({ rows, path, role, onAssign, onAction, onEditPlan, onDeleteP
               <tr key={row._id} className="align-top hover:bg-slate-50/60">
                 <td className="px-4 py-4">
                   <p className="text-xs font-bold text-slate-900">{trip?.tripNumber || 'Trip plan'}</p>
-                  {path === '/trips/route-planning' && <p className="mt-1 text-[11px] text-slate-500">{row.routeId}</p>}
+                  {path === '/trips/route-planning' && <>
+                    <p className="mt-1 text-[11px] text-slate-500">{row.routeId}</p>
+                    {row.distanceKm != null && <p className="mt-1 text-[10px] text-slate-400">{row.distanceKm} km · estimated toll {rupees(row.estimatedTollPaise)}</p>}
+                  </>}
                 </td>
                 <td className="px-4 py-4 text-xs text-slate-700">
                   <p>{trip?.bookingId?.bookingNumber || '—'}</p>
@@ -183,7 +190,9 @@ export default function TripManagement({ path = window.location.pathname }) {
   const [actionRemarks, setActionRemarks] = useState('');
   const [planRecord, setPlanRecord] = useState(null);
   const [planOpen, setPlanOpen] = useState(false);
-  const [planValues, setPlanValues] = useState({ tripId: '', routeId: '', waypoints: '', plannedStartDate: '', notes: '' });
+  const [routeOptions, setRouteOptions] = useState([]);
+  const [routeSearch, setRouteSearch] = useState('');
+  const [planValues, setPlanValues] = useState({ tripId: '', routeCatalogId: '', routeId: '', waypoints: '', plannedStartDate: '', notes: '' });
 
   const inputClass = 'mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100';
 
@@ -227,6 +236,24 @@ export default function TripManagement({ path = window.location.pathname }) {
     });
     return () => { active = false; };
   }, [isStaff, path]);
+
+  useEffect(() => {
+    if (!isStaff || path !== '/trips/route-planning') return;
+    let active = true;
+    const timer = window.setTimeout(() => {
+      const params = new URLSearchParams({ page: '1', limit: '100' });
+      if (routeSearch.trim()) params.set('search', routeSearch.trim());
+      tripRequest(`/routes?${params}`).then((result) => {
+        if (active) setRouteOptions(result.data || []);
+      }).catch((requestError) => {
+        if (active) setError(requestError.message);
+      });
+    }, 200);
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [isStaff, path, routeSearch]);
 
   useEffect(() => {
     if (!isStaff || path !== '/trips/scheduling') return;
@@ -329,13 +356,15 @@ export default function TripManagement({ path = window.location.pathname }) {
   function beginPlan(record = null) {
     setPlanRecord(record);
     setPlanOpen(true);
+    setRouteSearch(record?.routeCatalogId?.routeNumber || '');
     setPlanValues(record ? {
       tripId: record.tripId?._id || '',
+      routeCatalogId: record.routeCatalogId?._id || record.routeCatalogId || '',
       routeId: record.routeId || '',
       waypoints: record.waypoints || '',
       plannedStartDate: dateInput(record.plannedStartDate),
       notes: record.notes || ''
-    } : { tripId: '', routeId: '', waypoints: '', plannedStartDate: '', notes: '' });
+    } : { tripId: '', routeCatalogId: '', routeId: '', waypoints: '', plannedStartDate: '', notes: '' });
   }
 
   async function savePlan(event) {
@@ -346,6 +375,7 @@ export default function TripManagement({ path = window.location.pathname }) {
     try {
       const payload = {
         ...planValues,
+        routeCatalogId: planValues.routeCatalogId || null,
         plannedStartDate: planValues.plannedStartDate
           ? new Date(`${planValues.plannedStartDate}T00:00:00.000Z`).toISOString()
           : null
@@ -507,9 +537,30 @@ export default function TripManagement({ path = window.location.pathname }) {
                 {tripOptions.map((trip) => <option key={trip._id} value={trip._id}>{tripLabel(trip)}</option>)}
               </select>
             </label>}
-            <label className="block text-xs font-semibold text-slate-700">Route reference
-              <input required minLength={2} maxLength={100} value={planValues.routeId} onChange={(event) => setPlanValues((current) => ({ ...current, routeId: event.target.value }))} className={inputClass} />
+            <label className="block text-xs font-semibold text-slate-700">Find a saved route
+              <input value={routeSearch} onChange={(event) => setRouteSearch(event.target.value)} placeholder="Search route number, name, or city" className={inputClass} />
             </label>
+            <label className="block text-xs font-semibold text-slate-700">Saved route (optional)
+              <select value={planValues.routeCatalogId} onChange={(event) => {
+                const route = routeOptions.find((option) => option._id === event.target.value);
+                setPlanValues((current) => ({
+                  ...current,
+                  routeCatalogId: event.target.value,
+                  routeId: route?.routeNumber || (event.target.value ? current.routeId : ''),
+                  waypoints: route ? route.waypoints.join(' → ') : (event.target.value ? current.waypoints : '')
+                }));
+              }} className={inputClass}>
+                <option value="">Use a manual route reference</option>
+                {routeOptions.map((route) => <option key={route._id} value={route._id}>{route.routeNumber} · {route.origin} → {route.destination} · {route.distanceKm} km</option>)}
+              </select>
+            </label>
+            <label className="block text-xs font-semibold text-slate-700">Route reference
+              <input required={!planValues.routeCatalogId} minLength={2} maxLength={100} value={planValues.routeId} onChange={(event) => setPlanValues((current) => ({ ...current, routeId: event.target.value }))} className={inputClass} />
+            </label>
+            {planValues.routeCatalogId && (() => {
+              const route = routeOptions.find((option) => option._id === planValues.routeCatalogId);
+              return route ? <p className="rounded-lg border border-emerald-100 bg-emerald-50 p-3 text-xs text-emerald-900 md:col-span-2">Saved route data is copied into an immutable trip snapshot: {route.distanceKm} km, ~{route.estimatedDurationMinutes} minutes, toll data manually recorded. Future catalogue edits will not change this trip’s plan.</p> : null;
+            })()}
             <label className="block text-xs font-semibold text-slate-700">Planned start
               <input type="date" value={planValues.plannedStartDate} onChange={(event) => setPlanValues((current) => ({ ...current, plannedStartDate: event.target.value }))} className={inputClass} />
             </label>

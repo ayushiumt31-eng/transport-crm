@@ -11,7 +11,8 @@ const {
     vehicleListQuerySchema,
     vehicleSchema,
     vehicleStatusSchema,
-    vehicleUpdateSchema
+    vehicleUpdateSchema,
+    utilizationQuerySchema
 } = require('../../validations/fleet/fleet.validation');
 const Joi = require('joi');
 
@@ -19,6 +20,7 @@ const router = express.Router();
 router.use(verifyAccessToken, requireRole(...STAFF_ROLES));
 
 router.get('/dashboard', controller.getFleetDashboard);
+router.get('/utilization', validate(utilizationQuerySchema, 'query'), controller.getVehicleUtilization);
 router.get('/allocations/options/bookings', controller.listAllocatableBookings);
 router.get('/allocations/options/vehicles', validate(Joi.object({
     bookingId: Joi.string().pattern(/^[0-9a-fA-F]{24}$/).required()

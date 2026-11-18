@@ -1,3 +1,4 @@
+
 import React from 'react';
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { LoaderCircle } from 'lucide-react';
@@ -8,19 +9,45 @@ import { LoginPage, RegisterPage } from '../pages/Auth/LoginPage';
 import BookingManagement from '../pages/Booking/BookingManagement';
 import CustomerKycPortal from '../pages/Customer/CustomerKycPortal';
 import CustomerManagement from '../pages/Customer/CustomerManagement';
+import FeedbackManagement from '../pages/Customer/FeedbackManagement';
 import DashboardOverview from '../pages/Dashboard/DashboardOverview';
 import VehicleManagement from '../pages/Fleet/VehicleManagement';
 import FleetAllocation from '../pages/Fleet/FleetAllocation';
+import DriverManagement from '../pages/Drivers/DriverManagement';
 import TripManagement from '../pages/Trips/TripManagement';
+import CargoManagement from '../pages/Cargo/CargoManagement';
+import BillingManagement from '../pages/Billing/BillingManagement';
+import GstSettings from '../pages/Billing/GstSettings';
+import ExpenseManagement from '../pages/Billing/ExpenseManagement';
+import FuelManagement from '../pages/Fuel/FuelManagement';
+import MaintenanceManagement from '../pages/Maintenance/MaintenanceManagement';
+import RouteManagement from '../pages/Routes/RouteManagement';
+import GpsTracking from '../pages/Gps/GpsTracking';
+import NotificationCenter from '../pages/Notifications/NotificationCenter';
+import AnalyticsReports from '../pages/Reports/AnalyticsReports';
+import BackupManagement from '../pages/Settings/BackupManagement';
 import ModuleWorkspace from '../pages/ModuleWorkspace';
 
 function moduleElement(path) {
   if (path === '/crm/customers') return <CustomerManagement />;
+  if (path === '/crm/feedback') return <FeedbackManagement />;
   if (path === '/crm/portal') return <CustomerKycPortal />;
   if (path === '/crm/history' || path.startsWith('/bookings/')) return <BookingManagement />;
   if (path === '/fleet/register' || path === '/fleet/status') return <VehicleManagement />;
   if (path === '/fleet/allocation') return <FleetAllocation />;
+  if (path.startsWith('/drivers/')) return <DriverManagement path={path} />;
   if (path.startsWith('/trips/')) return <TripManagement path={path} />;
+  if (path.startsWith('/cargo/')) return <CargoManagement path={path} />;
+  if (['/billing/invoices', '/billing/payments', '/billing/reports'].includes(path)) return <BillingManagement path={path} />;
+  if (path === '/billing/expenses') return <ExpenseManagement />;
+  if (path === '/billing/tax') return <GstSettings />;
+  if (path.startsWith('/fuel/') || path === '/reports/fuel') return <FuelManagement path={path} />;
+  if (path.startsWith('/maintenance/') || path === '/reports/maintenance') return <MaintenanceManagement path={path} />;
+  if (path.startsWith('/routes/')) return <RouteManagement path={path} />;
+  if (path.startsWith('/gps/')) return <GpsTracking path={path} />;
+  if (path.startsWith('/notifications/')) return <NotificationCenter path={path} />;
+  if (path.startsWith('/reports/')) return <AnalyticsReports path={path} />;
+  if (path === '/settings/backup') return <BackupManagement />;
   return <ModuleWorkspace module={moduleByPath[path]} path={path} />;
 }
 

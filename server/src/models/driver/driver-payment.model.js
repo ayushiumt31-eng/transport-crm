@@ -21,7 +21,10 @@ const driverPaymentSchema = new mongoose.Schema({
     updatedBy: { type: String, required: true }
 }, { timestamps: true, versionKey: false });
 
-driverPaymentSchema.index({ driverId: 1, periodStart: 1, periodEnd: 1 }, { unique: true });
+driverPaymentSchema.index(
+    { driverId: 1, periodStart: 1, periodEnd: 1 },
+    { unique: true, partialFilterExpression: { isDeleted: false } }
+);
 driverPaymentSchema.index({ status: 1, periodStart: -1, isDeleted: 1 });
 
 module.exports = mongoose.model('DriverPayment', driverPaymentSchema);

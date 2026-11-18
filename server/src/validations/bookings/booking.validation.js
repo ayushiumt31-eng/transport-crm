@@ -79,3 +79,19 @@ exports.bookingStatusSchema = Joi.object({
     status: Joi.string().valid('pending', 'under_review', 'quoted', 'confirmed', 'rejected', 'cancelled', 'expired').required(),
     remarks: Joi.string().trim().max(500).allow('').default('')
 }).unknown(false);
+exports.bookingQuoteSchema = Joi.object({
+    validUntil: dateOnly.required(),
+    terms: Joi.string().trim().max(2000).allow('').default(''),
+    items: Joi.array().items(Joi.object({
+        description: Joi.string().trim().min(2).max(200).required(),
+        quantity: Joi.number().positive().max(100000).precision(3).required(),
+        unitPrice: Joi.number().min(0).max(100000000).precision(2).required()
+    }).unknown(false)).min(1).max(50).required()
+}).unknown(false);
+exports.quoteDecisionSchema = Joi.object({
+    decision: Joi.string().valid('accept', 'decline').required(),
+    version: Joi.number().integer().min(1).required(),
+    remarks: Joi.string().trim().max(500).allow('').default('')
+}).unknown(false).when(Joi.object({ decision: Joi.valid('decline') }).unknown(), {
+    then: Joi.object({ remarks: Joi.string().trim().min(2).max(500).required() })
+});

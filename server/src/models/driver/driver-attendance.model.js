@@ -18,7 +18,10 @@ const driverAttendanceSchema = new mongoose.Schema({
     updatedBy: { type: String, required: true }
 }, { timestamps: true, versionKey: false });
 
-driverAttendanceSchema.index({ driverId: 1, attendanceDate: 1 }, { unique: true });
+driverAttendanceSchema.index(
+    { driverId: 1, attendanceDate: 1 },
+    { unique: true, partialFilterExpression: { isDeleted: false } }
+);
 driverAttendanceSchema.index({ attendanceDate: -1, status: 1 });
 
 module.exports = mongoose.model('DriverAttendance', driverAttendanceSchema);

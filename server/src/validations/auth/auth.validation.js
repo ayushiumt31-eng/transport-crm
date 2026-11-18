@@ -36,6 +36,11 @@ exports.changePasswordSchema = Joi.object({
 exports.registerCustomerSchema = Joi.object({
     contactPerson: Joi.string().trim().min(2).max(100).required().messages({ 'string.empty': 'Your name is required.' }),
     companyName: Joi.string().trim().max(150).allow(''),
+    email: Joi.string().trim().lowercase().email().max(254).required().messages({
+        'string.email': 'Enter a valid email address.',
+        'string.empty': 'Email address is required.',
+        'any.required': 'Email address is required.'
+    }),
     phone: mobilePhone,
     password: newPassword.required()
 }).unknown(false);

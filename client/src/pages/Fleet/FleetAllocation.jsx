@@ -38,7 +38,7 @@ function FleetAllocation() {
     setBookings(result);
   }, []);
 
-  async function loadAll() {
+  const loadAll = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
@@ -48,7 +48,7 @@ function FleetAllocation() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [loadAllocations, loadBookings]);
 
   useEffect(() => { loadAll(); }, [loadAll]);
 

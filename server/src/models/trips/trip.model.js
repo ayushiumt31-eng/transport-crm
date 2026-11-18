@@ -44,6 +44,7 @@ const tripSchema = new mongoose.Schema({
 tripSchema.index({ tripStatus: 1, scheduledAt: 1, _id: 1 });
 tripSchema.index({ driverId: 1, tripStatus: 1, scheduledAt: -1 });
 tripSchema.index({ vehicleId: 1, tripStatus: 1 });
+tripSchema.index({ tripStatus: 1, actualStartedAt: 1, actualCompletedAt: 1 });
 
 const tripCounterSchema = new mongoose.Schema({
     _id: { type: String, required: true },

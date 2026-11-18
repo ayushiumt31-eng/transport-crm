@@ -67,7 +67,7 @@ export default function LoginAccessDialog({ role, profileId, personName, suggest
       setLoginId(result.data.account.loginId);
       setPassword('');
       setNotice(password
-        ? `Login saved. Share the login ID and new password with ${personName || 'this person'}.`
+        ? `Login saved. Share the email or login ID and new password with ${personName || 'this person'}.`
         : 'Login saved.');
     } catch (requestError) {
       setError(requestError.message);
@@ -97,7 +97,7 @@ export default function LoginAccessDialog({ role, profileId, personName, suggest
           {error && <div role="alert" className="flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800"><AlertCircle size={15} className="mt-0.5 shrink-0" />{error}</div>}
           {notice && <div role="status" className="flex items-start gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-900"><Check size={15} className="mt-0.5 shrink-0" />{notice}</div>}
           <label className="block text-xs font-semibold text-slate-700">
-            Login ID
+            Email address / Login ID
             <input value={loginId} onChange={(event) => setLoginId(event.target.value)} autoComplete="off" autoCapitalize="none" spellCheck={false} className={inputClass} />
             <span className="mt-1 block text-[11px] font-normal text-slate-500">3–50 characters: letters, numbers, dot, underscore, @ or hyphen.</span>
           </label>

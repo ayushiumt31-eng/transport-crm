@@ -147,9 +147,9 @@ const menuItems = [
     title: 'Notification Center',
     icon: Bell,
     submenus: [
-      { name: 'SMS Alerts', path: '/notifications/sms', description: 'Manage SMS alert delivery.' },
-      { name: 'Email Notifications', path: '/notifications/email', description: 'Manage email notifications.' },
-      { name: 'Push Notifications', path: '/notifications/push', description: 'Manage push notifications.' },
+      { name: 'SMS Alerts', path: '/notifications/sms', description: 'Review SMS channel status; provider integration is not configured.' },
+      { name: 'Email Notifications', path: '/notifications/email', description: 'Review email channel status; provider integration is not configured.' },
+      { name: 'Push Notifications', path: '/notifications/push', description: 'Review push channel status; provider integration is not configured.' },
       { name: 'Trip Alerts', path: '/notifications/trips', description: 'Review trip-related notifications.' }
     ]
   },
@@ -209,7 +209,7 @@ const pathsForRole = {
   customer: [
     '/crm/portal', '/crm/history', '/crm/feedback',
     '/bookings/vehicle', '/bookings/online', '/bookings/status',
-    '/cargo/tracking', '/cargo/status', '/cargo/pod',
+    '/cargo/tracking', '/cargo/status', '/cargo/pod', '/notifications/trips',
     '/billing/invoices', '/billing/payments'
   ]
 };

@@ -23,6 +23,28 @@ const statusHistorySchema = new mongoose.Schema({
     createdAt: { type: Date, required: true, default: Date.now }
 }, { _id: false });
 
+const quoteLineSchema = new mongoose.Schema({
+    description: { type: String, required: true, trim: true, maxlength: 200 },
+    quantityMilli: { type: Number, required: true, min: 1 },
+    unitPricePaise: { type: Number, required: true, min: 0 },
+    lineTotalPaise: { type: Number, required: true, min: 0 }
+}, { _id: false });
+
+const quoteSchema = new mongoose.Schema({
+    version: { type: Number, required: true, min: 1 },
+    currency: { type: String, enum: ['INR'], required: true, default: 'INR' },
+    items: { type: [quoteLineSchema], required: true, validate: [(items) => items.length > 0 && items.length <= 50, 'A quote must have between 1 and 50 line items.'] },
+    subtotalPaise: { type: Number, required: true, min: 1 },
+    totalPaise: { type: Number, required: true, min: 1 },
+    terms: { type: String, trim: true, default: '', maxlength: 2000 },
+    validUntil: { type: Date, required: true },
+    status: { type: String, enum: ['PendingAcceptance', 'Accepted', 'Declined', 'Expired', 'Withdrawn'], required: true },
+    issuedBy: { type: String, required: true, maxlength: 100 },
+    issuedAt: { type: Date, required: true },
+    respondedBy: { type: String, default: '', maxlength: 100 },
+    respondedAt: { type: Date, default: null }
+}, { _id: false });
+
 const bookingSchema = new mongoose.Schema({
     bookingNumber: { type: String, required: true, unique: true },
     bookingType: { type: String, required: true, enum: ['vehicle', 'online'] },
@@ -65,6 +87,7 @@ const bookingSchema = new mongoose.Schema({
         enum: ['pending', 'under_review', 'quoted', 'confirmed', 'rejected', 'cancelled', 'expired'],
         default: 'pending'
     },
+    quote: { type: quoteSchema, default: null },
     statusHistory: { type: [statusHistorySchema], default: [] }
 }, { timestamps: true, versionKey: false });
 

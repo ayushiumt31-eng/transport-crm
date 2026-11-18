@@ -44,13 +44,77 @@ const defaultForm = {
 
 const STAFF_STATUS_TRANSITIONS = {
   pending: ['under_review', 'rejected', 'cancelled'],
-  under_review: ['quoted', 'rejected', 'cancelled'],
-  quoted: ['confirmed', 'rejected', 'cancelled', 'expired'],
+  under_review: ['rejected', 'cancelled'],
+  quoted: ['rejected', 'cancelled'],
   confirmed: ['cancelled'],
   rejected: [],
   cancelled: [],
   expired: []
 };
+
+function rupees(paise) {
+  return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' }).format(Number(paise || 0) / 100);
+}
+
+function QuoteEditor({ booking, saving, onSubmit }) {
+  const existingQuote = booking.quote;
+  const expiry = existingQuote?.validUntil
+    ? new Date(existingQuote.validUntil).toISOString().slice(0, 10)
+    : new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
+  const [validUntil, setValidUntil] = useState(expiry);
+  const [terms, setTerms] = useState(existingQuote?.terms || '');
+  const [items, setItems] = useState(existingQuote?.items?.map((item) => ({
+    description: item.description,
+    quantity: String(item.quantityMilli / 1000),
+    unitPrice: String(item.unitPricePaise / 100)
+  })) || [{ description: 'Transport charge', quantity: '1', unitPrice: '' }]);
+  const [formError, setFormError] = useState('');
+
+  function updateItem(index, field, value) {
+    setItems((current) => current.map((item, itemIndex) => (
+      index === itemIndex ? { ...item, [field]: value } : item
+    )));
+  }
+
+  async function submit(event) {
+    event.preventDefault();
+    setFormError('');
+    try {
+      await onSubmit({
+        validUntil,
+        terms: terms.trim(),
+        items: items.map((item) => ({
+          description: item.description.trim(),
+          quantity: Number(item.quantity),
+          unitPrice: Number(item.unitPrice)
+        }))
+      });
+    } catch (error) {
+      setFormError(error.message);
+    }
+  }
+
+  return (
+    <form onSubmit={submit} className="mt-3 space-y-3 rounded-lg border border-sky-200 bg-sky-50 p-3">
+      <div className="text-xs font-bold text-sky-950">{existingQuote ? `Revise quote v${existingQuote.version}` : 'Prepare customer quote'}</div>
+      {formError && <p role="alert" className="text-xs text-rose-700">{formError}</p>}
+      {items.map((item, index) => (
+        <div key={index} className="grid gap-2 sm:grid-cols-[1fr_0.5fr_0.7fr_auto]">
+          <input required aria-label={`Quote line ${index + 1} description`} value={item.description} onChange={(event) => updateItem(index, 'description', event.target.value)} placeholder="Charge description" className="rounded-md border border-slate-300 bg-white px-2 py-2 text-xs" />
+          <input required aria-label={`Quote line ${index + 1} quantity`} type="number" min="0.001" max="100000" step="0.001" value={item.quantity} onChange={(event) => updateItem(index, 'quantity', event.target.value)} className="rounded-md border border-slate-300 bg-white px-2 py-2 text-xs" />
+          <input required aria-label={`Quote line ${index + 1} rate`} type="number" min="0" max="100000000" step="0.01" value={item.unitPrice} onChange={(event) => updateItem(index, 'unitPrice', event.target.value)} placeholder="Rate (INR)" className="rounded-md border border-slate-300 bg-white px-2 py-2 text-xs" />
+          <button type="button" disabled={items.length <= 1} aria-label={`Remove quote line ${index + 1}`} onClick={() => setItems((current) => current.filter((_, itemIndex) => itemIndex !== index))} className="rounded-md border border-slate-300 px-2 text-xs text-slate-600 disabled:opacity-40">Remove</button>
+        </div>
+      ))}
+      <button type="button" disabled={items.length >= 50} onClick={() => setItems((current) => [...current, { description: '', quantity: '1', unitPrice: '' }])} className="text-xs font-semibold text-sky-800 disabled:opacity-40">+ Add charge</button>
+      <div className="grid gap-2 sm:grid-cols-2">
+        <label className="text-[11px] font-semibold text-slate-700">Valid through<input required type="date" min={new Date().toISOString().slice(0, 10)} value={validUntil} onChange={(event) => setValidUntil(event.target.value)} className="mt-1 w-full rounded-md border border-slate-300 bg-white px-2 py-2 text-xs" /></label>
+        <label className="text-[11px] font-semibold text-slate-700">Terms<input maxLength={2000} value={terms} onChange={(event) => setTerms(event.target.value)} placeholder="Optional quote terms" className="mt-1 w-full rounded-md border border-slate-300 bg-white px-2 py-2 text-xs" /></label>
+      </div>
+      <button type="submit" disabled={saving} className="rounded-md bg-sky-800 px-3 py-2 text-xs font-bold text-white disabled:opacity-50">{saving ? 'Saving…' : 'Send quote to customer'}</button>
+    </form>
+  );
+}
 
 // The signed-in user's token is attached by apiFetch; the API decides what each role may do.
 async function apiRequest(path, options = {}) {
@@ -113,6 +177,7 @@ function BookingManagement() {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [updating, setUpdating] = useState('');
+  const [quoteUpdating, setQuoteUpdating] = useState('');
   const [selectedDetails, setSelectedDetails] = useState(null);
   const [loadingDetails, setLoadingDetails] = useState('');
   // Super admin and managers share the staff view; customers see only their own bookings.
@@ -150,12 +215,15 @@ function BookingManagement() {
     try {
       setLoading(true);
       setError('');
-      if (role === 'admin') {
+      if (role === 'admin' && pathname === '/bookings/calendar') {
         const today = new Date();
         const startDate = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
         const endDate = new Date(today.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
         const response = await apiRequest(`/customers/booking/calendar?startDate=${startDate}&endDate=${endDate}`);
         setBookings(Array.isArray(response) ? response : response.bookings || []);
+      } else if (role === 'admin') {
+        const response = await apiRequest('/customers/booking?page=1&limit=100');
+        setBookings(response.bookings || response.data?.bookings || []);
       } else {
         const response = await apiRequest('/customers/booking?page=1&limit=20');
         const list = response.bookings || response.data?.bookings || [];
@@ -252,6 +320,45 @@ function BookingManagement() {
         body: { status, remarks: `Booking status updated to ${status}` }
       });
       setNotice(`Booking ${bookingId} status updated to ${status}.`);
+      await loadBookings();
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setUpdating('');
+    }
+  }
+
+  async function handleIssueQuote(bookingId, payload) {
+    setQuoteUpdating(bookingId);
+    setError('');
+    setNotice('');
+    try {
+      await apiRequest(`/customers/booking/${bookingId}/quote`, { method: 'PUT', body: payload });
+      setNotice('Quote sent to the customer for review.');
+      await loadBookings();
+    } catch (requestError) {
+      setError(requestError.message);
+      throw requestError;
+    } finally {
+      setQuoteUpdating('');
+    }
+  }
+
+  async function handleQuoteDecision(bookingId, quote, decision) {
+    const remarks = decision === 'decline'
+      ? window.prompt('Please share a reason for declining this quote.')
+      : '';
+    if (decision === 'decline' && !remarks?.trim()) return;
+    setUpdating(bookingId);
+    setError('');
+    setNotice('');
+    try {
+      await apiRequest(`/customers/booking/${bookingId}/quote/decision`, {
+        method: 'PATCH',
+        body: { decision, version: quote.version, ...(decision === 'decline' ? { remarks: remarks.trim() } : {}) }
+      });
+      setNotice(decision === 'accept' ? 'Quote accepted; your booking is confirmed.' : 'Quote declined.');
+      setSelectedDetails(null);
       await loadBookings();
     } catch (requestError) {
       setError(requestError.message);
@@ -433,6 +540,44 @@ function BookingManagement() {
                       <div>Vehicle: {booking.vehicleRequirement?.vehicleType || '—'}</div>
                     </div>
 
+                    {role === 'admin' && ['under_review', 'quoted'].includes(status)
+                      && !['Accepted', 'Declined'].includes(booking.quote?.status) && (
+                        <QuoteEditor
+                          key={`${booking._id || booking.id}-${booking.quote?.version || 0}`}
+                          booking={booking}
+                          saving={quoteUpdating === (booking._id || booking.id)}
+                          onSubmit={(payload) => handleIssueQuote(booking._id || booking.id, payload)}
+                        />
+                    )}
+
+                    {role === 'customer' && booking.quote && (
+                      <div className="mt-3 space-y-2 rounded-lg border border-sky-200 bg-sky-50 p-3">
+                        <div className="flex items-center justify-between gap-2 text-xs">
+                          <strong className="text-sky-950">Quote v{booking.quote.version}</strong>
+                          <span className="font-semibold text-sky-800">{booking.quote.status}</span>
+                        </div>
+                        <ul className="space-y-1 text-xs text-slate-700">
+                          {booking.quote.items.map((item, index) => (
+                            <li key={`${item.description}-${index}`} className="flex justify-between gap-3">
+                              <span>{item.description} × {Number(item.quantityMilli / 1000).toLocaleString('en-IN')}</span>
+                              <strong>{rupees(item.lineTotalPaise)}</strong>
+                            </li>
+                          ))}
+                        </ul>
+                        <div className="flex justify-between border-t border-sky-200 pt-2 text-xs font-bold text-slate-900">
+                          <span>Total (INR)</span><span>{rupees(booking.quote.totalPaise)}</span>
+                        </div>
+                        <p className="text-[11px] text-slate-600">Valid through {new Date(booking.quote.validUntil).toLocaleDateString('en-IN')}</p>
+                        {booking.quote.terms && <p className="whitespace-pre-wrap text-xs text-slate-600">{booking.quote.terms}</p>}
+                        {booking.quote.status === 'PendingAcceptance' && new Date(booking.quote.validUntil) >= new Date() && (
+                          <div className="flex gap-2 pt-1">
+                            <button type="button" disabled={updating === (booking._id || booking.id)} onClick={() => handleQuoteDecision(booking._id || booking.id, booking.quote, 'accept')} className="rounded-md bg-emerald-700 px-3 py-2 text-xs font-bold text-white disabled:opacity-50">Accept quote</button>
+                            <button type="button" disabled={updating === (booking._id || booking.id)} onClick={() => handleQuoteDecision(booking._id || booking.id, booking.quote, 'decline')} className="rounded-md border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 disabled:opacity-50">Decline</button>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
                     {role === 'admin' && (
                       <div className="mt-3 flex items-center gap-2">
                         <select
@@ -441,7 +586,7 @@ function BookingManagement() {
                           disabled={updating === booking._id}
                           className="w-full rounded-md border border-slate-300 bg-white px-2 py-2 text-xs text-slate-800"
                         >
-                          {[status, ...(STAFF_STATUS_TRANSITIONS[status] || [])].map((item) => (
+                          {[status, ...(STAFF_STATUS_TRANSITIONS[status] || []), ...(status === 'quoted' && booking.quote?.validUntil && new Date(booking.quote.validUntil) < new Date() ? ['expired'] : [])].map((item) => (
                             <option key={item} value={item}>{item}</option>
                           ))}
                         </select>

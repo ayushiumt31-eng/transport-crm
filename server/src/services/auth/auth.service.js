@@ -14,7 +14,10 @@ const BAD_CREDENTIALS = 'Incorrect login ID or password.';
 // Compared against when the login ID does not exist, so response time doesn't reveal valid IDs.
 const DUMMY_HASH = bcrypt.hashSync('not-a-real-password', BCRYPT_ROUNDS);
 
-const serviceError = (message, statusCode) => Object.assign(new Error(message), { statusCode });
+const serviceError = (message, statusCode) => Object.assign(new Error(message), {
+    statusCode,
+    expose: statusCode === 503
+});
 
 // How each role's profile record is loaded, checked and shown to the client.
 const profiles = {
@@ -86,7 +89,13 @@ function issueToken(account) {
 }
 
 exports.login = async (loginId, password) => {
-    const account = await UserAccount.findOne({ loginId }).select('+passwordHash');
+    let account = await UserAccount.findOne({ loginId }).select('+passwordHash');
+    if (!account && loginId.includes('@')) {
+        const customer = await Customer.findOne({ email: loginId }).select('_id').lean();
+        if (customer) {
+            account = await UserAccount.findOne({ role: 'customer', profileId: customer._id }).select('+passwordHash');
+        }
+    }
     if (!account) {
         await bcrypt.compare(password, DUMMY_HASH);
         throw serviceError(BAD_CREDENTIALS, 401);
@@ -142,30 +151,34 @@ exports.changePassword = async (accountId, currentPassword, newPassword) => {
     return issueToken(account);
 };
 
-exports.registerCustomer = async ({ contactPerson, companyName = '', phone, password }) => {
-    if (await UserAccount.exists({ loginId: phone })) {
-        throw serviceError('A login already exists for this mobile number. Sign in instead.', 409);
-    }
-    if (await Customer.exists({ phone })) {
-        throw serviceError('This mobile number is already registered with us. Ask our team to set up your login.', 409);
-    }
+exports.registerCustomer = async ({ contactPerson, companyName = '', email, phone, password }) => {
+   const loginId = email.trim().toLowerCase();
+   if (await UserAccount.exists({ loginId })) {
+       throw serviceError('A login already exists for this email address. Sign in instead.', 409);
+   }
+   if (await Customer.exists({ phone })) {
+       throw serviceError('This mobile number is already registered with us. Ask our team to set up your login.', 409);
+   }
+   if (await Customer.exists({ email: loginId })) {
+       throw serviceError('This email address is already registered with us. Ask our team to set up your login.', 409);
+   }
 
-    let customer;
-    try {
-        customer = await Customer.create({ phone, contactPerson, companyName });
-        await UserAccount.create({
-            loginId: phone,
-            passwordHash: await bcrypt.hash(password, BCRYPT_ROUNDS),
-            role: 'customer',
-            profileId: customer._id,
+   let customer;
+   try {
+       customer = await Customer.create({ email: loginId, phone, contactPerson, companyName });
+       await UserAccount.create({
+           loginId,
+           passwordHash: await bcrypt.hash(password, BCRYPT_ROUNDS),
+           role: 'customer',
+           profileId: customer._id,
             createdBy: 'self-registration'
         });
     } catch (error) {
         if (customer) await Customer.deleteOne({ _id: customer._id });
-        if (error?.code === 11000) throw serviceError('A login already exists for this mobile number. Sign in instead.', 409);
+        if (error?.code === 11000) throw serviceError('This email address or mobile number is already registered. Sign in or contact support.', 409);
         throw error;
     }
-    return exports.login(phone, password);
+    return exports.login(loginId, password);
 };
 
 // ---- Staff-managed logins (manager, driver, customer) ----
